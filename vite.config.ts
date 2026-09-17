@@ -9,7 +9,7 @@ import tailwindcss from "@tailwindcss/vite";
  * репозиторий — правится одно место, а не конфиг сборки.
  */
 export default defineConfig({
-  base: process.env.VITE_BASE || "/prometey_autotrade/",
+  base: process.env.VITE_BASE || "/prometey_autotrade_app/",
   plugins: [react(), tailwindcss()],
   server: { port: 5178, host: true },
 });
