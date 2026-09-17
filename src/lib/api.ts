@@ -14,7 +14,8 @@
  * Авторизация — подпись Telegram initData в заголовке. Заголовок, а не тело:
  * запросы тут GET, и initData в строке запроса осела бы в логах прокси.
  */
-import { tg } from "./tg";
+import { inTelegram, tg } from "./tg";
+import { standalone } from "./pwa";
 
 const qs = new URLSearchParams(location.search);
 
@@ -31,9 +32,17 @@ const devToken = qs.get("dev") || import.meta.env.VITE_DEV_TOKEN || "";
  * рабочего стола открывается именно в браузере — без билета приложение
  * показывало бы демо-данные и выглядело бы сломанным.
  *
- * Билет приезжает параметром `?t=` ровно один раз, тут же переносится в
- * localStorage и ВЫЧИЩАЕТСЯ ИЗ АДРЕСНОЙ СТРОКИ: иначе он остался бы в
- * истории браузера, в закладке и на любом скриншоте.
+ * Билет приезжает параметром `?t=` и сохраняется в localStorage.
+ *
+ * Из адресной строки он вычищается НЕ ВСЕГДА, и это осознанный размен. В
+ * обычной вкладке браузера адрес — это ровно то, что «Добавить на экран
+ * Домой» запомнит в ярлыке: вычисти мы билет, ярлык открывался бы без
+ * доступа к счёту, то есть на демо-данных. А у установленного приложения и
+ * внутри Telegram адресной строки нет вовсе (там же и билет не нужен —
+ * работает подпись), поэтому там чистим.
+ *
+ * Хранилище у установленного на iOS приложения СВОЁ, отдельное от Safari, —
+ * поэтому полагаться на один localStorage нельзя, билет обязан быть в адресе.
  */
 const SESSION_KEY = "prometey.session";
 
@@ -42,9 +51,11 @@ function readSession(): string {
     const fromUrl = qs.get("t");
     if (fromUrl) {
       localStorage.setItem(SESSION_KEY, fromUrl);
-      const clean = new URL(location.href);
-      clean.searchParams.delete("t");
-      history.replaceState(null, "", clean.toString());
+      if (standalone() || inTelegram) {
+        const clean = new URL(location.href);
+        clean.searchParams.delete("t");
+        history.replaceState(null, "", clean.toString());
+      }
       return fromUrl;
     }
     return localStorage.getItem(SESSION_KEY) || "";

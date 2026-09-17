@@ -7,6 +7,16 @@
     <!-- Цвет до загрузки CSS: иначе первый кадр белый, и на тёмной теме это
          вспышка в глаза. -->
     <meta name="theme-color" content="#000000" />
+    <!-- Ярлык на рабочем столе должен открывать САМОСТОЯТЕЛЬНОЕ приложение, а
+         не закладку в браузере и не мини-апп внутри Telegram. За это отвечают
+         манифест и две метки Apple: без них iOS открывает обычную вкладку
+         Safari со всей адресной строкой. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PROMETHEUS" />
     <title>PROMETHEUS · автотрейд</title>
     <style>html,body{background:#000;margin:0}</style>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>

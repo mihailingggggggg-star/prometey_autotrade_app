@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
 import { Glass, Press, Sheet } from "../ui/kit";
-import { newSession, webLink } from "../lib/api";
+import { hasSession, newSession, webLink } from "../lib/api";
 import { useApp } from "../lib/store";
-import { canAddToHome, haptic, isIOS, openExternal, tg } from "../lib/tg";
+import { canInstall, install, personalizeManifest, standalone } from "../lib/pwa";
+import { haptic, inTelegram, isIOS, openExternal } from "../lib/tg";
 
 const DISMISS_KEY = "prometey.addhome.hidden";
 
 export const homeCardHidden = () => {
+  // Установленному приложению предлагать установку незачем.
+  if (standalone()) return true;
   try { return localStorage.getItem(DISMISS_KEY) === "1"; } catch { return false; }
 };
 const hideCard = () => {
@@ -15,14 +18,13 @@ const hideCard = () => {
 };
 
 /**
- * Приглашение вынести приложение на рабочий стол.
+ * Вынести приложение на рабочий стол — БЕЗ Telegram.
  *
- * Тонкость, без которой предложение было бы издевательством: «Добавить на
- * экран» умеет только БРАУЗЕР, а внутри Telegram такого пункта нет вовсе.
- * Значит сначала надо открыть приложение снаружи — и вот тут вылезает вторая
- * тонкость: снаружи нет подписи Telegram, то есть нет и доступа к счёту.
- * Поэтому по кнопке мы сперва берём у бота билет и уже с ним открываем
- * веб-версию. Без билета ярлык вёл бы на демо-данные.
+ * Ярлык открывает самостоятельное веб-приложение: своё окно, свой значок, без
+ * мессенджера вокруг. Тонкость в том, что снаружи Telegram нет подписи
+ * initData, то есть нет и доступа к счёту, — поэтому перед выходом в браузер
+ * приложение берёт у бота билет и уходит уже с ним. Без билета ярлык
+ * открывался бы на демо-данных и выглядел бы сломанным.
  */
 export function AddToHomeCard({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
@@ -40,7 +42,7 @@ export function AddToHomeCard({ onDone }: { onDone: () => void }) {
                 Добавьте приложение на экран смартфона
               </div>
               <div className="text-[13px] mt-1 leading-snug" style={{ color: "var(--label-2)" }}>
-                Открывается одним касанием, как обычное приложение — без поиска чата
+                Открывается одним касанием, как обычное приложение — без Telegram и поиска чата
               </div>
             </div>
             <SquarePlus size={20} style={{ color: "var(--label-3)" }} className="shrink-0" />
@@ -62,9 +64,18 @@ function HowToSheet({ open, onClose, onDone }: {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const ios = isIOS();
+  // В браузере мы уже там, куда надо попасть, — остаётся сам ярлык.
+  const inBrowser = !inTelegram;
+
+  /* Манифест персонализируем заранее: к моменту, когда человек нажмёт
+     «Добавить на экран», в адресе уже должны быть и билет, и адрес API —
+     именно их система запомнит в ярлыке. */
+  useEffect(() => {
+    if (open && inBrowser) personalizeManifest();
+  }, [open, inBrowser]);
 
   /* Билет берём ровно в момент нажатия, а не заранее: выданный впустую, он
-     гасил бы предыдущий — билет на человека один. */
+     погасил бы предыдущий — билет на человека один. */
   const openOutside = async () => {
     setBusy(true);
     try {
@@ -75,63 +86,74 @@ function HowToSheet({ open, onClose, onDone }: {
     } catch {
       // Билет не дали — открываем как есть. Приложение честно покажет, что
       // данные счёта недоступны, вместо того чтобы не открыться вовсе.
-      const url = location.href;
-      setLink(url);
-      openExternal(url);
+      setLink(location.href);
+      openExternal(location.href);
     } finally {
       setBusy(false);
     }
   };
 
+  const systemInstall = async () => {
+    if (await install()) { haptic.ok(); onDone(); }
+  };
+
   return (
-    <Sheet open={open} onClose={onClose} title="Ярлык на рабочем столе" tall>
+    <Sheet open={open} onClose={onClose} title="Приложение на рабочем столе" tall>
       <div className="pb-3 space-y-3">
-        {canAddToHome() && (
-          <Press onClick={() => { tg?.addToHomeScreen?.(); haptic.ok(); onDone(); }}
-                 className="block w-full">
-            <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
+        {/* Android и десктопный Chrome умеют ставить приложение системным
+            окном — тогда никаких инструкций не нужно вовсе. */}
+        {inBrowser && canInstall() && (
+          <Press onClick={systemInstall} feel="press" className="block w-full">
+            <div className="py-3.5 rounded-[16px] flex items-center justify-center gap-2
+                            text-[16px] font-semibold text-white"
                  style={{ background: "var(--tint)" }}>
-              Добавить сразу
+              <SquarePlus size={17} /> Установить приложение
             </div>
           </Press>
         )}
 
         <Glass flat className="p-4">
           <div className="text-[15px] font-semibold mb-2.5">
-            {ios ? "На iPhone" : "На Android"}
+            {inBrowser ? (ios ? "На iPhone" : "На Android") : "Три шага"}
           </div>
-          <Step n={1} icon={<ExternalLink size={15} />}
-                text="Нажмите «Открыть в браузере» ниже — приложение откроется отдельной страницей." />
-          <Step n={2} icon={<Share size={15} />}
+          {!inBrowser && (
+            <Step n={1} icon={<ExternalLink size={15} />}
+                  text="Нажмите «Открыть в браузере» — приложение откроется отдельной страницей, уже с доступом к вашему счёту." />
+          )}
+          <Step n={inBrowser ? 1 : 2} icon={<Share size={15} />}
                 text={ios
-                  ? "В браузере нажмите «Поделиться» — квадрат со стрелкой вверх внизу экрана."
-                  : "В браузере откройте меню — три точки в правом верхнем углу."} />
-          <Step n={3} icon={<SquarePlus size={15} />}
+                  ? "Нажмите «Поделиться» — квадрат со стрелкой вверх внизу экрана."
+                  : "Откройте меню браузера — три точки в правом верхнем углу."} />
+          <Step n={inBrowser ? 2 : 3} icon={<SquarePlus size={15} />}
                 text={ios
                   ? "Выберите «На экран «Домой»» и подтвердите «Добавить»."
-                  : "Выберите «Добавить на главный экран» и подтвердите."} />
-          <Step n={4} last icon={<Check size={15} />}
-                text="Готово: значок появится рядом с обычными приложениями." />
+                  : "Выберите «Установить приложение» или «Добавить на главный экран»."} />
+          <Step n={inBrowser ? 3 : 4} last icon={<Check size={15} />}
+                text="Значок появится рядом с обычными приложениями и откроется на весь экран — без Telegram." />
         </Glass>
 
-        {/* Честно про то, чего человек иначе не ждёт: снаружи Telegram нет
-            подписи, и доступ к счёту держится на билете из ссылки. */}
+        {/* Честно про то, чего человек иначе не ждёт: снаружи Telegram доступ
+            к счёту держится на ключе внутри ссылки. */}
         <p className="text-[12px] leading-snug px-1" style={{ color: "var(--label-2)" }}>
-          Ссылка содержит ваш личный ключ доступа — не передавайте её. Открыв
-          мини-апп в Telegram заново, вы сделаете старую ссылку недействительной.
+          Ссылка содержит ваш личный ключ доступа — не передавайте её и не
+          публикуйте. Открыв мини-апп в Telegram заново, вы сделаете старую
+          ссылку недействительной.
         </p>
 
-        <Press onClick={openOutside} disabled={busy} feel="press" className="block w-full">
-          <div className="py-3.5 rounded-[16px] flex items-center justify-center gap-2
-                          text-[16px] font-semibold text-white"
-               style={{ background: busy ? "var(--label-3)" : "var(--tint)" }}>
-            <ExternalLink size={17} /> {busy ? "Готовим ссылку…" : "Открыть в браузере"}
-          </div>
-        </Press>
+        {!inBrowser && (
+          <Press onClick={openOutside} disabled={busy} feel="press" className="block w-full">
+            <div className="py-3.5 rounded-[16px] flex items-center justify-center gap-2
+                            text-[16px] font-semibold text-white"
+                 style={{ background: busy ? "var(--label-3)" : "var(--tint)" }}>
+              <ExternalLink size={17} /> {busy ? "Готовим ссылку…" : "Открыть в браузере"}
+            </div>
+          </Press>
+        )}
 
-        {link && (
+        {(link || (inBrowser && hasSession())) && (
           <Press onClick={() => {
-                   navigator.clipboard?.writeText(link);
+                   const url = link || location.href;
+                   navigator.clipboard?.writeText(url);
                    setCopied(true); haptic.ok();
                    setTimeout(() => setCopied(false), 1600);
                  }} className="block w-full">

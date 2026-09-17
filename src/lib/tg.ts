@@ -23,10 +23,6 @@ type TG = {
   openLink?(url: string, opts?: { try_instant_view?: boolean }): void;
   platform?: string;
   version?: string;
-  /** Ярлык на рабочий стол средствами Telegram (Bot API 8.0+). На iOS его
-   *  нет — там остаётся путь «Поделиться → На экран Домой» в браузере. */
-  addToHomeScreen?(): void;
-  checkHomeScreenStatus?(cb: (status: string) => void): void;
 };
 
 export const tg: TG | undefined = (window as any).Telegram?.WebApp;
@@ -66,20 +62,9 @@ export const haptic = {
 
 export const tgUser = tg?.initDataUnsafe?.user;
 
-/** Версия клиента не ниже нужной. Мини-апп открывают и на старых сборках,
- *  где новых методов просто нет: вызвав их вслепую, мы получили бы молчание
- *  вместо действия. */
-export function atLeast(version: string): boolean {
-  const cur = (tg?.version || "6.0").split(".").map(Number);
-  const need = version.split(".").map(Number);
-  for (let i = 0; i < need.length; i++) {
-    if ((cur[i] || 0) > (need[i] || 0)) return true;
-    if ((cur[i] || 0) < (need[i] || 0)) return false;
-  }
-  return true;
-}
-
-export const canAddToHome = () => Boolean(tg?.addToHomeScreen) && atLeast("8.0");
+/* Ярлыка средствами Telegram здесь намеренно нет: он ставит значок, который
+   открывает мини-апп ВНУТРИ мессенджера. Нам нужно самостоятельное веб-
+   приложение — см. lib/pwa.ts. */
 
 /** Открыть ссылку снаружи. В Telegram — встроенный браузер, вне его — вкладка. */
 export function openExternal(url: string) {
