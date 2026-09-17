@@ -9,7 +9,7 @@ type Step = "hello" | "contacts" | "code";
 
 /** Незалогиненная зона. Пока человек здесь — ни вкладок, ни данных счёта. */
 export function Auth() {
-  const { setStage, setUser } = useApp();
+  const { setStage, setUser, saveProfile } = useApp();
   const [step, setStep] = useState<Step>("hello");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -67,7 +67,15 @@ export function Auth() {
             </div>
             <div className="flex-1" />
             <Press feel="press" className="block w-full" disabled={phone.length < 6 || !email.includes("@")}
-                   onClick={() => { setUser({ phone, email, name: tgUser?.first_name || "Трейдер" }); setStep("code"); }}>
+                   onClick={() => {
+                     setUser({ phone, email, name: tgUser?.first_name || "Трейдер" });
+                     // Профиль уезжает боту сразу: регистрация — это и есть
+                     // первое открытие приложения, отдельного шага «создать
+                     // аккаунт» нет. Ряд там уже заведён по подписи Telegram,
+                     // мы лишь дописываем контакты.
+                     void saveProfile(email, phone);
+                     setStep("code");
+                   }}>
               <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white"
                    style={{ background: "var(--tint)" }}>Получить код</div>
             </Press>

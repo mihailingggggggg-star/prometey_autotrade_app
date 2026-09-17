@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import * as M from "./mock";
 import { useFeed, useTickers } from "./useMarket";
 import type { Feed } from "./market";
-import { hasApi, type ApiPosition, type ApiTrade } from "./api";
+import * as API from "./api";
+import { hasApi, type ApiMe, type ApiPosition, type ApiTrade } from "./api";
 import { useServer, type Link } from "./useServer";
 
 export type Stage = "auth" | "onboarding" | "app";
@@ -46,11 +47,29 @@ type Ctx = {
 
   positions: M.Position[];
   closePosition: (id: string) => void;
+  closeAllPositions: () => void;
   updateLevels: (id: string, tp: number, sl: number) => void;
   feed: Feed;               // связь с рынком: live / connecting / offline
   marketReady: boolean;     // пришла ли настоящая цена хотя бы по одной монете
+  mode: "demo" | "live";    // счёт бота: демо или реальные деньги
+  /** Текущая схема выхода словами — так же, как её печатает панель бота. */
+  scheme: { long: string; short: string } | null;
   link: Link;               // связь с ботом: off (демо) / ok / denied / down
   demo: boolean;            // данные показываются учебные, а не со счёта
+  me: ApiMe | null;         // профиль с сервера
+  /** Права приходят С СЕРВЕРА и не выводятся из роли на клиенте: решение о
+   *  том, кому что можно, принимается в одном месте — там, где деньги. */
+  can: { control: boolean; topupFree: boolean; demo: boolean };
+  /** Действие ушло на сервер и вернулось. Текст ошибки показываем как есть:
+   *  «не получилось» без причины заставляет гадать. */
+  act: (name: string, run: () => Promise<unknown>) => Promise<boolean>;
+  setMode: (m: "demo" | "live") => void;
+  setScheme: (side: "long" | "short",
+              scheme: { legs: { r: number; pct: number }[]; be_r: number | null } | null) => void;
+  saveProfile: (email: string, phone: string) => Promise<boolean>;
+  busy: string;             // какое действие сейчас выполняется
+  error: string;            // последняя ошибка действия
+  clearError: () => void;
 
   trades: M.Trade[];
   riskAlert: boolean;       // риск > 5% депозита
@@ -87,13 +106,33 @@ export const useApp = () => {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<Stage>("auth");
   const [user, setUserRaw] = useState({ name: "", email: "", phone: "" });
-  const [balance, setBalance] = useState(38.4);
-  const [owed, setOwed] = useState(4.31);
+  const [localBalance, setBalance] = useState(38.4);
+  const [localOwed, setOwed] = useState(4.31);
   const [sub, setSub] = useState<Ctx["sub"]>({ active: true, until: Date.now() + 61 * 864e5, plan: "3 месяца" });
   const [api, setApi] = useState({ connected: true, key: "kQ7f••••••••••••3xZa", secret: "••••••••••••••••" });
   const [closed, setClosed] = useState<string[]>([]);
   const [overrides, setOverrides] = useState<Record<string, { tp: number; sl: number }>>({});
   const server = useServer();
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  /* Одна обёртка на все действия: блокировка кнопки, разбор ошибки и
+     немедленная дозагрузка состояния. Последнее важнее прочего — сервер мог
+     применить не то, что мы просили (проверка диапазонов), и верить своему
+     представлению о результате нельзя. */
+  const act = async (name: string, run: () => Promise<unknown>) => {
+    setBusy(name); setError("");
+    try {
+      await run();
+      server.reload();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
   const [settings, setSettingsRaw] = useState<Settings>({
     enabled: true, riskUsd: 10, maxOpen: 3, allowLong: true, allowShort: true,
     whaleOnly: false, leverageMode: "max", leverage: 20, limitTtlMin: 240,
@@ -178,6 +217,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         limitTtlMin: server.state.settings.limitTtlMin }
     : settings;
 
+  /* Деньги СЕРВИСА (комиссионный счёт) живут в профиле на сервере. Локальное
+     состояние остаётся только для демо-режима, где сервера нет вовсе. */
+  const balance = server.me ? server.me.balance : localBalance;
+  const owed = server.me ? server.me.owed : localOwed;
+
   const blocked = owed > balance;
   const riskAlert = shown.riskUsd > deposit * 0.05;
 
@@ -186,7 +230,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     user, setUser: (u) => setUserRaw((p) => ({ ...p, ...u })),
     balance, inPositions, deposit, owed, blocked,
     payOwed: () => { setBalance((b) => +(b - owed).toFixed(2)); setOwed(0); },
-    topUp: (v) => setBalance((b) => +(b + v).toFixed(2)),
+    /* Пополнение «из воздуха» — привилегия владельца, она для отладки и показа.
+       Обычный путь пополнения — перевод USDT, и подтверждает его человек. */
+    topUp: (v) => {
+      if (demo || !server.me?.can.topupFree) return void setBalance((b) => +(b + v).toFixed(2));
+      void act("topup", () => API.topUp(v));
+    },
     sub, buyPlan: (id) => {
       const p = M.PLANS.find((x) => x.id === id);
       if (!p) return;
@@ -196,18 +245,72 @@ export function AppProvider({ children }: { children: ReactNode }) {
     connectApi: (key, secret) =>
       setApi({ connected: true, key: key.slice(0, 4) + "••••••••••••" + key.slice(-4), secret: "••••••••••••••••" }),
     disconnectApi: () => setApi({ connected: false, key: "", secret: "" }),
-    settings: shown, setSettings: (p) => setSettingsRaw((s) => ({ ...s, ...p })),
+    settings: shown,
+    setSettings: (p) => {
+      if (demo) return void setSettingsRaw((s) => ({ ...s, ...p }));
+      // Названия полей у бота свои (risk_usd, а не riskUsd): переводим здесь,
+      // в одном месте, а не в каждом экране.
+      const patch: API.SettingsPatch = {};
+      if (p.riskUsd !== undefined) patch.risk_usd = p.riskUsd;
+      if (p.maxOpen !== undefined) patch.max_open = p.maxOpen;
+      if (p.leverage !== undefined) patch.leverage = p.leverage;
+      if (p.leverageMode !== undefined) patch.leverage_mode = p.leverageMode;
+      if (p.limitTtlMin !== undefined) patch.limit_ttl_min = p.limitTtlMin;
+      if (p.enabled !== undefined) return void act("enabled", () => API.putEnabled(p.enabled!));
+      if (Object.keys(patch).length) void act("settings", () => API.putSettings(patch));
+    },
     positions, feed, marketReady, link: server.link, demo,
-    closePosition: (id) => setClosed((c) => [...c, id]),
-    updateLevels: (id, tp, sl) => setOverrides((o) => ({ ...o, [id]: { tp, sl } })),
+    mode: server.state?.mode ?? "demo",
+    scheme: server.state?.scheme ?? null,
+    me: server.me,
+    can: server.me?.can
+      ? { control: server.me.can.control, topupFree: server.me.can.topupFree,
+          demo: server.me.can.demo }
+      // Демо-режим: показываем всё, иначе прототип нечем смотреть.
+      : { control: demo, topupFree: demo, demo: demo },
+    act, busy, error, clearError: () => setError(""),
+    setMode: (m) => { if (!demo) void act("mode", () => API.putMode(m)); },
+    setScheme: (side, scheme) => { if (!demo) void act("scheme", () => API.putScheme(side, scheme)); },
+    saveProfile: async (email, phone) => {
+      setUserRaw((p) => ({ ...p, email, phone }));
+      if (demo) return true;
+      return act("profile", () => API.putProfile(email, phone));
+    },
+    closePosition: (id) => {
+      if (demo) return void setClosed((c) => [...c, id]);
+      void act("close:" + id, () => API.closePosition(id));
+    },
+    /* Одной командой серверу, а не перебором на клиенте: перебор рвётся
+       посередине при первой же ошибке сети, и часть позиций остаётся открытой
+       ровно тогда, когда их закрывают — когда что-то идёт не так. */
+    closeAllPositions: () => {
+      if (demo) return void setClosed((c) => [...c, ...specs.map((x) => x.id)]);
+      void act("close_all", () => API.closeAll());
+    },
+    updateLevels: (id, tp, sl) => {
+      if (demo) return void setOverrides((o) => ({ ...o, [id]: { tp, sl } }));
+      void act("levels:" + id, () => API.setLevels(id, tp, sl));
+    },
     trades, riskAlert,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }
 
-/** PnL позиции в долларах и в R — одна формула на весь интерфейс. */
+/** PnL позиции в долларах и в R — одна формула на весь интерфейс.
+ *
+ *  У НЕПРОЛИВШЕЙСЯ ЛИМИТКИ PnL НЕ СУЩЕСТВУЕТ. Это ордер, а не позиция: монет
+ *  на счёте нет, терять и зарабатывать нечем. Считая его как позицию, мы
+ *  брали цену сигнала за цену входа и показывали движение рынка как свой
+ *  результат — сделки, которой не было. Отсюда же и «−$4.20» на ряду, по
+ *  которому не куплено ни одной монеты. */
 export function posPnl(p: M.Position) {
+  if (p.status === "pending") return { usd: 0, r: 0, pct: 0, pending: true as const };
   const d = p.side === "long" ? p.mark - p.entry : p.entry - p.mark;
   const rDist = Math.abs(p.entry - p.sl);
-  return { usd: d * p.size, r: rDist ? d / rDist : 0, pct: (d / p.entry) * 100 * p.lev };
+  return { usd: d * p.size, r: rDist ? d / rDist : 0, pct: (d / p.entry) * 100 * p.lev,
+           pending: false as const };
 }
+
+/** В рынке ли позиция. Отдельной функцией, потому что вопрос «сколько у меня
+ *  открыто» задаётся в трёх местах и везде должен отвечать одинаково. */
+export const isOpen = (p: M.Position) => p.status !== "pending";

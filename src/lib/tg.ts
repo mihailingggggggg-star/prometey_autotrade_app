@@ -19,6 +19,14 @@ type TG = {
   initDataUnsafe?: { user?: { first_name?: string; username?: string; id?: number } };
   setHeaderColor?(c: string): void;
   disableVerticalSwipes?(): void;
+  /** Открыть ссылку во ВСТРОЕННОМ браузере Telegram. */
+  openLink?(url: string, opts?: { try_instant_view?: boolean }): void;
+  platform?: string;
+  version?: string;
+  /** Ярлык на рабочий стол средствами Telegram (Bot API 8.0+). На iOS его
+   *  нет — там остаётся путь «Поделиться → На экран Домой» в браузере. */
+  addToHomeScreen?(): void;
+  checkHomeScreenStatus?(cb: (status: string) => void): void;
 };
 
 export const tg: TG | undefined = (window as any).Telegram?.WebApp;
@@ -57,3 +65,27 @@ export const haptic = {
 };
 
 export const tgUser = tg?.initDataUnsafe?.user;
+
+/** Версия клиента не ниже нужной. Мини-апп открывают и на старых сборках,
+ *  где новых методов просто нет: вызвав их вслепую, мы получили бы молчание
+ *  вместо действия. */
+export function atLeast(version: string): boolean {
+  const cur = (tg?.version || "6.0").split(".").map(Number);
+  const need = version.split(".").map(Number);
+  for (let i = 0; i < need.length; i++) {
+    if ((cur[i] || 0) > (need[i] || 0)) return true;
+    if ((cur[i] || 0) < (need[i] || 0)) return false;
+  }
+  return true;
+}
+
+export const canAddToHome = () => Boolean(tg?.addToHomeScreen) && atLeast("8.0");
+
+/** Открыть ссылку снаружи. В Telegram — встроенный браузер, вне его — вкладка. */
+export function openExternal(url: string) {
+  if (tg?.openLink) tg.openLink(url, { try_instant_view: false });
+  else window.open(url, "_blank", "noopener");
+}
+
+export const platform = () => (tg?.platform || "web").toLowerCase();
+export const isIOS = () => ["ios", "macos"].includes(platform());

@@ -46,9 +46,11 @@ export function Market() {
 }
 
 function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
-  const { usd, r, pct: ppct } = posPnl(p);
+  const { usd, r, pct: ppct, pending } = posPnl(p);
   const up = p.side === "long";
-  const progress = Math.max(0, Math.min(1, Math.abs(p.mark - p.entry) / Math.abs(p.tp - p.entry)));
+  // У лимитки прогресс «от входа к цели» тоже бессмыслен: входа ещё не было.
+  const progress = pending ? 0
+    : Math.max(0, Math.min(1, Math.abs(p.mark - p.entry) / Math.abs(p.tp - p.entry)));
   return (
     <Press onClick={onOpen} className="block w-full" scale={0.975} feel="press">
       <Glass className="p-4">
@@ -74,11 +76,21 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
                              color: "var(--orange)" }}>лимитка</span>
             )}
           </div>
-          <motion.div key={Math.round(usd * 100)} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }}
-                      className="text-right shrink-0">
-            <div className="text-[17px] font-bold" style={{ color: tone(usd) }}>{money(usd, true)}</div>
-            <div className="text-[12px]" style={{ color: tone(usd) }}>{rr(r)} · {pct(ppct)}</div>
-          </motion.div>
+          {pending ? (
+            /* Ордер, а не позиция: показывать по нему результат не из чего. */
+            <div className="text-right shrink-0">
+              <div className="text-[13px] font-semibold" style={{ color: "var(--orange)" }}>
+                ждём налива
+              </div>
+              <div className="text-[11px]" style={{ color: "var(--label-2)" }}>позиции ещё нет</div>
+            </div>
+          ) : (
+            <motion.div key={Math.round(usd * 100)} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }}
+                        className="text-right shrink-0">
+              <div className="text-[17px] font-bold" style={{ color: tone(usd) }}>{money(usd, true)}</div>
+              <div className="text-[12px]" style={{ color: tone(usd) }}>{rr(r)} · {pct(ppct)}</div>
+            </motion.div>
+          )}
         </div>
 
         {/* Полоса «где цена между входом и целью» — быстрее любых цифр. */}
@@ -89,7 +101,7 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
         </div>
 
         <div className="flex items-center justify-between mt-2.5 text-[12px]" style={{ color: "var(--label-2)" }}>
-          <span>вход {price(p.entry)}</span>
+          <span>{pending ? "лимитка" : "вход"} {price(p.entry)}</span>
           <span>сейчас <b style={{ color: "var(--label)" }}>{price(p.mark)}</b></span>
           <span>цель {price(p.tp)}</span>
         </div>
@@ -108,7 +120,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
   const [tf, setTf] = useState<Interval>("15");
   const [fullChart, setFullChart] = useState(false);
   const tk = useTickers([p.symbol])[p.symbol];
-  const { usd, r } = posPnl(p);
+  const { usd, r, pending } = posPnl(p);
 
   return (
     <motion.div
@@ -137,10 +149,22 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
           <div className="flex items-end justify-between">
             <div>
               <div className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
-                {p.side === "long" ? "Лонг" : "Шорт"} · {p.lev}× · открыта {ago(p.openedAt)}
+                {p.side === "long" ? "Лонг" : "Шорт"} · {p.lev}× ·{" "}
+                {pending ? `выставлена ${ago(p.openedAt)}` : `открыта ${ago(p.openedAt)}`}
               </div>
-              <div className="num-hero mt-1" style={{ color: tone(usd) }}>{money(usd, true)}</div>
-              <div className="text-[15px] mt-0.5" style={{ color: tone(usd) }}>{rr(r)}</div>
+              {pending ? (
+                <>
+                  <div className="num-hero mt-1" style={{ color: "var(--orange)" }}>—</div>
+                  <div className="text-[15px] mt-0.5" style={{ color: "var(--label-2)" }}>
+                    лимитка выставлена, позиции ещё нет
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="num-hero mt-1" style={{ color: tone(usd) }}>{money(usd, true)}</div>
+                  <div className="text-[15px] mt-0.5" style={{ color: tone(usd) }}>{rr(r)}</div>
+                </>
+              )}
             </div>
             {/* Цена и сутки — прямо с биржи: PnL считается от них, и человек
                 должен видеть тот же источник, а не «примерно такое» число. */}
@@ -199,7 +223,8 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
         </div>
 
         <div className="px-4 mt-3 grid grid-cols-2 gap-2.5">
-          <Press onClick={() => { setTp(p.tp); setSl(p.sl); setEdit(true); }} className="block">
+          <Press onClick={() => { setTp(p.tp); setSl(p.sl); setEdit(true); }}
+                 disabled={pending} className="block">
             <Glass flat className="py-3.5 flex items-center justify-center gap-2 text-[15px] font-medium">
               <SlidersHorizontal size={17} /> Уровни
             </Glass>
@@ -207,7 +232,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
           <Press onClick={() => setConfirm(true)} feel="heavy" className="block">
             <div className="py-3.5 rounded-[16px] flex items-center justify-center gap-2 text-[15px] font-semibold text-white"
                  style={{ background: "var(--red)" }}>
-              <OctagonX size={17} /> Закрыть
+              <OctagonX size={17} /> {pending ? "Снять лимитку" : "Закрыть"}
             </div>
           </Press>
         </div>
@@ -241,9 +266,13 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                style={{ background: "color-mix(in srgb, var(--red) 18%, transparent)" }}>
             <OctagonX size={24} style={{ color: "var(--red)" }} />
           </div>
-          <h3 className="text-[19px] font-bold">Закрыть {p.symbol.replace("USDT", "")}?</h3>
+          <h3 className="text-[19px] font-bold">
+            {pending ? "Снять лимитку" : "Закрыть"} {p.symbol.replace("USDT", "")}?
+          </h3>
           <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
-            Позиция закроется по рыночной цене. Результат {money(usd, true)} зафиксируется.
+            {pending
+              ? "Ордер будет снят с биржи. Позиции по этой монете нет, терять нечего."
+              : `Позиция закроется по рыночной цене. Результат ${money(usd, true)} зафиксируется.`}
           </p>
           <div className="flex gap-2.5 mt-5">
             <Press onClick={() => setConfirm(false)} className="flex-1">

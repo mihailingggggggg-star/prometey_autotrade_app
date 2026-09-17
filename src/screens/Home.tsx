@@ -5,10 +5,11 @@ import {
   Radio, Newspaper, Cpu, Globe, OctagonX, WifiOff, ServerCrash, FlaskConical, Lock,
 } from "lucide-react";
 import { Aurora, Glass, GroupLabel, Modal, Press, Segmented, Sheet, Title, Row, tone } from "../ui/kit";
-import { useApp, posPnl } from "../lib/store";
+import { useApp, posPnl, isOpen } from "../lib/store";
 import * as M from "../lib/mock";
 import { useTickers } from "../lib/useMarket";
 import { haptic } from "../lib/tg";
+import { AddToHomeCard, homeCardHidden } from "./AddToHome";
 import type { Ticker } from "../lib/market";
 
 const SIG_SYMBOLS = M.signals.map((s) => s.symbol);
@@ -24,14 +25,15 @@ const PERIODS: { id: Period; label: string; days: number }[] = [
 ];
 
 export function Home({ onTab }: { onTab: (t: Tab) => void }) {
-  const { trades, positions, settings, setSettings, topUp, balance, feed, link, demo } = useApp();
+  const { trades, positions, settings, setSettings, topUp, balance, feed, link, demo, can, busy } = useApp();
   // Подписка живёт на уровне экрана, а не в каждой карточке: шесть карточек
   // подняли бы шесть одинаковых подписок на один и тот же тикер.
   const sigTicks = useTickers(SIG_SYMBOLS);
   const [period, setPeriod] = useState<Period>("w");
   const [detail, setDetail] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
-  const { closePosition } = useApp();
+  const [showAddHome, setShowAddHome] = useState(!homeCardHidden());
+  const { closeAllPositions } = useApp();
 
   const stat = useMemo(() => {
     const days = PERIODS.find((p) => p.id === period)!.days;
@@ -51,7 +53,12 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
     };
   }, [trades, period]);
 
-  const floating = positions.reduce((s, p) => s + posPnl(p).usd, 0);
+  // «В рынке» — только реально открытые. Непролившаяся лимитка позицией не
+  // является: считая её, мы обещали бы плавающий результат по сделке, которой
+  // ещё нет.
+  const live = positions.filter(isOpen);
+  const waiting = positions.length - live.length;
+  const floating = live.reduce((s, p) => s + posPnl(p).usd, 0);
 
   return (
     <div className="pb-2">
@@ -86,10 +93,15 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
               <span>винрейт {stat.wr}%</span>
             </div>
 
-            {positions.length > 0 && (
+            {(live.length > 0 || waiting > 0) && (
               <div className="mt-3 pt-3 flex items-center justify-between hairline-t">
                 <span className="text-[14px]" style={{ color: "var(--label-2)" }}>
-                  В рынке сейчас: {positions.length}
+                  В рынке сейчас: {live.length}
+                  {waiting > 0 && (
+                    <span style={{ color: "var(--orange)" }}>
+                      {" "}· {waiting} {plural(waiting, "лимитка", "лимитки", "лимиток")} ждёт
+                    </span>
+                  )}
                 </span>
                 <span className="text-[15px] font-semibold" style={{ color: tone(floating) }}>
                   {money(floating, true)}
@@ -111,10 +123,11 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
       <div className="px-4 grid grid-cols-3 gap-2.5" data-coach="quick">
         <QuickAction
           icon={settings.enabled ? <Pause size={19} /> : <Play size={19} />}
-          label={settings.enabled ? "Пауза" : "Запустить"} locked={!demo}
+          label={settings.enabled ? "Пауза" : "Запустить"} locked={!can.control}
+          disabled={busy === "enabled"}
           tint={settings.enabled ? "var(--orange)" : "var(--green)"}
           onClick={() => setSettings({ enabled: !settings.enabled })} />
-        <QuickAction icon={<OctagonX size={19} />} label="Закрыть всё" tint="var(--red)" locked={!demo}
+        <QuickAction icon={<OctagonX size={19} />} label="Закрыть всё" tint="var(--red)" locked={!can.control}
                      onClick={() => setConfirmAll(true)} disabled={!positions.length} />
         <QuickAction icon={<Plus size={19} />} label="Пополнить" tint="var(--tint)"
                      onClick={() => topUp(50)} />
@@ -171,6 +184,10 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
           </Glass>
         </div>
       )}
+
+      {/* Приглашение вынести приложение на рабочий стол. Показывается ПОСЛЕ
+          онбординга и убирается навсегда, как только человек им занялся. */}
+      {showAddHome && <AddToHomeCard onDone={() => setShowAddHome(false)} />}
 
       {/* ── Последние сигналы ──────────────────────────────────────────────── */}
       <GroupLabel>Последние сигналы</GroupLabel>
@@ -247,7 +264,7 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
               <div className="glass glass-flat py-3 text-center text-[16px] font-medium">Отмена</div>
             </Press>
             <Press feel="heavy" className="flex-1"
-                   onClick={() => { positions.forEach((p) => closePosition(p.id)); setConfirmAll(false); }}>
+                   onClick={() => { closeAllPositions(); setConfirmAll(false); }}>
               <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
                    style={{ background: "var(--red)" }}>Закрыть всё</div>
             </Press>
@@ -285,10 +302,10 @@ function QuickAction({ icon, label, tint, onClick, disabled, locked }: {
                style={{ background: "var(--label-3)" }}>
             <Lock size={22} style={{ color: "var(--label-2)" }} />
           </div>
-          <h3 className="text-[19px] font-bold">Управление — в боте</h3>
+          <h3 className="text-[19px] font-bold">Доступно владельцу счёта</h3>
           <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
-            Мини-апп показывает состояние счёта и не отдаёт команд на биржу.
-            «{label}» — в Telegram-панели бота.
+            «{label}» управляет торговым счётом бота. Вы видите его состояние, но
+            распоряжаться им может только владелец.
           </p>
           <Press onClick={() => setHint(false)} className="block w-full mt-5">
             <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"

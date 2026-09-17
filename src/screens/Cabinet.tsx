@@ -25,7 +25,19 @@ export function Cabinet() {
 
   return (
     <div className="pb-2">
-      <Title sub={a.user.name || "Личный кабинет"}>Кабинет</Title>
+      <Title sub={a.me?.name || a.user.name || "Личный кабинет"}>Кабинет</Title>
+
+      {/* Роль видна сразу: у владельца счёта есть права, которых нет у
+          остальных, и держать это в тайне от него самого незачем. */}
+      {a.me?.role === "admin" && (
+        <div className="px-4 -mt-1 mb-2">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-semibold"
+                style={{ background: "color-mix(in srgb, var(--tint) 18%, transparent)",
+                         color: "var(--tint)" }}>
+            <BadgeCheck size={13} /> Владелец счёта
+          </span>
+        </div>
+      )}
 
       {/* ── Баланс ─────────────────────────────────────────────────────────── */}
       <div className="px-4" data-coach="balance">
@@ -38,10 +50,18 @@ export function Cabinet() {
             <span>в позициях ${a.inPositions.toFixed(2)}</span>
             <span>депозит биржи ${a.deposit.toFixed(2)}</span>
           </div>
+          {/* У владельца пополнение мгновенное и «из воздуха» — это для показа
+              и отладки. Остальные платят по-настоящему: перевод USDT, который
+              подтверждает человек. Одна кнопка с двумя разными смыслами была бы
+              ловушкой, поэтому и надпись разная. */}
           <Press feel="press" className="block w-full mt-4"
-                 onClick={() => setPay({ title: "Пополнение баланса", amount: 50, note: "Любая сумма от $10" })}>
+                 onClick={() => a.can.topupFree
+                   ? a.topUp(50)
+                   : setPay({ title: "Пополнение баланса", amount: 50, note: "Любая сумма от $10" })}>
             <div className="py-3 rounded-[14px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>Пополнить</div>
+                 style={{ background: "var(--tint)" }}>
+              {a.can.topupFree ? "Начислить $50 (владелец)" : "Пополнить"}
+            </div>
           </Press>
         </Glass>
       </div>
@@ -277,7 +297,7 @@ function PlansSheet({ open, onClose, onBuy }: { open: boolean; onClose: () => vo
 
 /* ── Настройки бота (те же, что в Telegram-боте) ────────────────────────────── */
 function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { settings: s, setSettings, deposit, riskAlert, demo } = useApp();
+  const { settings: s, setSettings, deposit, riskAlert, can, busy } = useApp();
   const rec = Math.floor(deposit * 0.05);
   return (
     <Sheet open={open} onClose={onClose} title="Настройки бота" tall>
@@ -286,18 +306,19 @@ function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) 
             рабочими — человек подвинул бы риск, увидел новое число и был бы
             уверен, что бот теперь рискует иначе. Это худший вид вранья в
             торговом интерфейсе, поэтому здесь замок и прямая инструкция. */}
-        {!demo && (
+        {/* Управлять счётом может только его владелец: у обычного пользователя
+            нет счёта, которым он мог бы тут распоряжаться. Право приходит с
+            сервера, а не выводится из роли на клиенте. */}
+        {!can.control && (
           <Glass flat className="p-3.5 flex items-start gap-3">
             <Lock size={18} className="mt-0.5 shrink-0" style={{ color: "var(--label-2)" }} />
             <div className="text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
-              Показаны настоящие настройки бота. Менять их — в Telegram-панели:
-              <b style={{ color: "var(--label)" }}> ⚙️ Настройки</b>. Мини-апп
-              работает только на чтение.
+              Настройки показаны для сведения. Управление счётом доступно его владельцу.
             </div>
           </Glass>
         )}
-        <fieldset disabled={!demo} className="space-y-3"
-                  style={!demo ? { opacity: 0.72 } : undefined}>
+        <fieldset disabled={!can.control || !!busy} className="space-y-3"
+                  style={!can.control ? { opacity: 0.72 } : undefined}>
         <Glass flat className="p-4">
           <div className="flex items-baseline justify-between">
             <span className="text-[15px]">Риск на сделку</span>
@@ -330,17 +351,9 @@ function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) 
                right={<Toggle on={s.whaleOnly} onChange={(v) => setSettings({ whaleOnly: v })} />} />
         </Glass>
 
-        <div>
-          <div className="text-[13px] mb-1.5 px-1" style={{ color: "var(--label-2)" }}>Схема выхода</div>
-          <Segmented value={s.tpMode} onChange={(v) => setSettings({ tpMode: v })}
-                     options={[{ id: "single", label: "Одна цель" }, { id: "ladder", label: "Лесенка" }]} />
-          <Glass flat className="overflow-hidden mt-2">
-            <Row title="Цель" note="в R от риска" right={<b>{s.tpR}R</b>} />
-            <Row last title="Безубыток"
-                 note={s.beR ? "стоп в точку входа при достижении уровня" : "стоп остаётся на месте"}
-                 right={<b>{s.beR ? `с ${s.beR}R` : "выкл"}</b>} />
-          </Glass>
-        </div>
+        <SchemeEditor />
+
+        <AccountMode />
 
         <Glass flat className="overflow-hidden">
           <Row title="Плечо" note={s.leverageMode === "max" ? "максимум по монете с запасом до ликвидации" : "фиксированное"}
@@ -439,6 +452,170 @@ function Field({ label, value, onChange, placeholder, secret }: {
                className="bg-transparent outline-none w-full text-[16px] font-mono"
                style={{ color: "var(--label)" }} />
       </div>
+    </div>
+  );
+}
+
+/* ── Счёт: демо или реальные деньги ──────────────────────────────────────────
+   Самая дорогая путаница из возможных, поэтому переключение в LIVE требует
+   отдельного подтверждения, а сам режим виден всегда — ровно как в панели
+   бота, где он печатается в шапке каждого экрана. */
+function AccountMode() {
+  const { mode, setMode, can } = useApp();
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <div>
+      <div className="text-[13px] mb-1.5 px-1" style={{ color: "var(--label-2)" }}>Счёт</div>
+      <Segmented value={mode}
+                 onChange={(v) => (v === "live" ? setConfirm(true) : setMode("demo"))}
+                 options={[{ id: "demo", label: "🧪 Демо" }, { id: "live", label: "🔴 Реальный" }]} />
+      <p className="text-[12px] mt-1.5 px-1 leading-snug" style={{ color: "var(--label-2)" }}>
+        {mode === "live"
+          ? "Бот торгует настоящими деньгами."
+          : can.demo
+            ? "Виртуальные средства Bybit. Сделки настоящие, деньги — нет."
+            : "Демо-счёт доступен владельцу."}
+      </p>
+
+      <Modal open={confirm} onClose={() => setConfirm(false)}>
+        <div className="text-center">
+          <div className="mx-auto mb-3 flex items-center justify-center w-12 h-12 rounded-full"
+               style={{ background: "color-mix(in srgb, var(--red) 18%, transparent)" }}>
+            <ShieldAlert size={24} style={{ color: "var(--red)" }} />
+          </div>
+          <h3 className="text-[19px] font-bold">Переключить на реальные деньги?</h3>
+          <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
+            Следующий сигнал откроет позицию на живом счёте. Убедитесь, что риск на
+            сделку задан верно.
+          </p>
+          <div className="flex gap-2.5 mt-5">
+            <Press onClick={() => setConfirm(false)} className="flex-1">
+              <div className="glass glass-flat py-3 text-center text-[16px] font-medium">Отмена</div>
+            </Press>
+            <Press feel="heavy" className="flex-1"
+                   onClick={() => { setMode("live"); haptic.warn(); setConfirm(false); }}>
+              <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                   style={{ background: "var(--red)" }}>Переключить</div>
+            </Press>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ── Схема выхода ────────────────────────────────────────────────────────────
+   Те же правила, что у мастера в Telegram, и проверяет их тот же код на
+   сервере: доли дают ровно 100%, уровни R строго растут, безубыток лежит до
+   последней цели. Здесь интерфейс лишь не даёт собрать заведомо неверное —
+   но последнее слово всё равно за сервером. */
+const R_STEP = 0.25;
+
+function SchemeEditor() {
+  const { scheme, setScheme, can } = useApp();
+  const [side, setSide] = useState<"long" | "short">("long");
+  const [own, setOwn] = useState(false);
+  const [legs, setLegs] = useState<{ r: number; pct: number }[]>([{ r: 1.5, pct: 100 }]);
+  const [beR, setBeR] = useState<number | null>(1);
+
+  const current = scheme?.[side] || "";
+  const sum = legs.reduce((a, l) => a + l.pct, 0);
+  const rising = legs.every((l, i) => i === 0 || l.r > legs[i - 1].r);
+  const beOk = beR === null || (beR > 0 && beR < legs[legs.length - 1].r);
+  const valid = sum === 100 && rising && beOk;
+
+  const setLeg = (i: number, patch: Partial<{ r: number; pct: number }>) =>
+    setLegs((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  return (
+    <div>
+      <div className="text-[13px] mb-1.5 px-1" style={{ color: "var(--label-2)" }}>Схема выхода</div>
+      <Segmented value={side} onChange={(v) => setSide(v as "long" | "short")}
+                 options={[{ id: "long", label: "Лонг" }, { id: "short", label: "Шорт" }]} />
+
+      <Glass flat className="overflow-hidden mt-2">
+        <Row title="Сейчас" note={current ? undefined : "ступени приходят из сигнала"}
+             right={<b className="text-[13px]">{current || "из сигнала"}</b>} />
+        <Row last title="Своя схема"
+             note="иначе торгуем ровно тем, что прислал скринер"
+             right={<Toggle on={own} onChange={(v) => { setOwn(v); if (!v) setScheme(side, null); }} />} />
+      </Glass>
+
+      {own && (
+        <Glass flat className="overflow-hidden mt-2">
+          {legs.map((l, i) => (
+            <Row key={i} title={`Цель ${i + 1}`}
+                 note={`закрыть ${l.pct}% позиции`}
+                 right={
+                   <div className="flex items-center gap-1">
+                     <Stepper value={l.r} suffix="R" step={R_STEP}
+                              onChange={(v) => setLeg(i, { r: Math.max(R_STEP, v) })} />
+                     <Stepper value={l.pct} suffix="%" step={5}
+                              onChange={(v) => setLeg(i, { pct: Math.min(100, Math.max(5, v)) })} />
+                   </div>
+                 } />
+          ))}
+          <Row title="Число целей"
+               right={
+                 <div className="flex items-center gap-2">
+                   <Press onClick={() => setLegs((ls) => ls.length > 1 ? ls.slice(0, -1) : ls)}
+                          className="px-3 py-1 text-[17px]">−</Press>
+                   <b>{legs.length}</b>
+                   <Press onClick={() => setLegs((ls) => ls.length < 3
+                            ? [...ls, { r: +(ls[ls.length - 1].r + 1).toFixed(2), pct: 0 }] : ls)}
+                          className="px-3 py-1 text-[17px]">+</Press>
+                 </div>
+               } />
+          <Row last title="Безубыток"
+               note={beR ? "стоп в точку входа при достижении уровня" : "стоп остаётся на месте"}
+               right={
+                 <div className="flex items-center gap-1">
+                   <Toggle on={beR !== null} onChange={(v) => setBeR(v ? 1 : null)} />
+                   {beR !== null && (
+                     <Stepper value={beR} suffix="R" step={R_STEP}
+                              onChange={(v) => setBeR(Math.max(R_STEP, v))} />
+                   )}
+                 </div>
+               } />
+        </Glass>
+      )}
+
+      {own && (
+        <>
+          {!valid && (
+            <p className="text-[12px] mt-2 px-1 leading-snug" style={{ color: "var(--orange)" }}>
+              {sum !== 100 ? `Доли дают ${sum}% — нужно ровно 100%.`
+                : !rising ? "Уровни целей должны идти по возрастанию."
+                : "Безубыток обязан лежать ближе последней цели."}
+            </p>
+          )}
+          <Press disabled={!valid || !can.control} className="block w-full mt-2"
+                 onClick={() => { setScheme(side, { legs, be_r: beR }); haptic.ok(); }}>
+            <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                 style={{ background: valid ? "var(--tint)" : "var(--label-3)" }}>
+              Применить к {side === "long" ? "лонгам" : "шортам"}
+            </div>
+          </Press>
+        </>
+      )}
+      <p className="text-[12px] mt-2 px-1 leading-snug" style={{ color: "var(--label-2)" }}>
+        Своя схема разводит торговлю и замер: карточка сигнала и Signal Lab
+        продолжат показывать схему скринера.
+      </p>
+    </div>
+  );
+}
+
+function Stepper({ value, suffix, step, onChange }: {
+  value: number; suffix: string; step: number; onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center glass glass-flat">
+      <Press onClick={() => onChange(+(value - step).toFixed(2))} className="px-2.5 py-1 text-[15px]">−</Press>
+      <span className="text-[13px] font-semibold tabular-nums w-[46px] text-center">
+        {value}{suffix}
+      </span>
+      <Press onClick={() => onChange(+(value + step).toFixed(2))} className="px-2.5 py-1 text-[15px]">+</Press>
     </div>
   );
 }

@@ -7,8 +7,8 @@
  * задержку опроса и нагрузить бота работой, которую браузер делает сам.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getPositions, getState, getTrades, hasApi,
-         type ApiPosition, type ApiState, type ApiTrade } from "./api";
+import { ApiError, getMe, getPositions, getState, getTrades, hasApi,
+         type ApiMe, type ApiPosition, type ApiState, type ApiTrade } from "./api";
 
 const STATE_MS = 5000;
 const TRADES_MS = 60000;
@@ -17,6 +17,7 @@ export type Link = "off" | "loading" | "ok" | "denied" | "down";
 
 export type Server = {
   link: Link;
+  me: ApiMe | null;
   state: ApiState | null;
   positions: ApiPosition[];
   trades: ApiTrade[];
@@ -25,6 +26,7 @@ export type Server = {
 
 export function useServer(): Server {
   const [link, setLink] = useState<Link>(hasApi ? "loading" : "off");
+  const [me, setMe] = useState<ApiMe | null>(null);
   const [state, setState] = useState<ApiState | null>(null);
   const [positions, setPositions] = useState<ApiPosition[]>([]);
   const [trades, setTrades] = useState<ApiTrade[]>([]);
@@ -33,7 +35,8 @@ export function useServer(): Server {
   const pull = useCallback(async (withTrades: boolean) => {
     if (!hasApi || denied.current) return;
     try {
-      const [s, p] = await Promise.all([getState(), getPositions()]);
+      const [m, s, p] = await Promise.all([getMe(), getState(), getPositions()]);
+      setMe(m);
       setState(s);
       setPositions(p.positions);
       if (withTrades) setTrades((await getTrades(0)).trades);
@@ -61,5 +64,5 @@ export function useServer(): Server {
     return () => { clearInterval(a); clearInterval(b); document.removeEventListener("visibilitychange", vis); };
   }, [pull]);
 
-  return { link, state, positions, trades, reload: () => pull(true) };
+  return { link, me, state, positions, trades, reload: () => pull(true) };
 }

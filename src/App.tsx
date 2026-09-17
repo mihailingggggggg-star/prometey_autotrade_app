@@ -9,9 +9,11 @@ import { Market } from "./screens/Market";
 import { Trades } from "./screens/Trades";
 import { Cabinet } from "./screens/Cabinet";
 import { DebtGate } from "./screens/DebtGate";
+import { Modal, Press } from "./ui/kit";
+import { TriangleAlert } from "lucide-react";
 
 export function App() {
-  const { stage, setStage, positions, blocked, link } = useApp();
+  const { stage, setStage, positions, blocked, link, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>("home");
 
   /* Бот ответил «вы это вы» — значит авторизация уже состоялась, подписью
@@ -50,6 +52,25 @@ export function App() {
           <TabBar tab={tab} onTab={setTab} badge={{ market: positions.length }} />
           {stage === "onboarding" && <Onboarding tab={tab} onTab={setTab} />}
           <DebtGate open={blocked && stage === "app"} />
+          {/* Отказ сервера показываем ТЕКСТОМ, как он пришёл. «Не получилось»
+              без причины заставляет гадать, а причина у бота всегда конкретная:
+              значение вне диапазона, нет боевых ключей, биржа отбила ордер. */}
+          <Modal open={!!error} onClose={clearError}>
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex items-center justify-center w-12 h-12 rounded-full"
+                   style={{ background: "color-mix(in srgb, var(--orange) 18%, transparent)" }}>
+                <TriangleAlert size={22} style={{ color: "var(--orange)" }} />
+              </div>
+              <h3 className="text-[19px] font-bold">Не выполнено</h3>
+              <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
+                {error}
+              </p>
+              <Press onClick={clearError} className="block w-full mt-5">
+                <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                     style={{ background: "var(--tint)" }}>Понятно</div>
+              </Press>
+            </div>
+          </Modal>
         </>
       )}
     </div>
