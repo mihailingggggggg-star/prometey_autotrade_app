@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone } from "../ui/kit";
 import { useApp } from "../lib/store";
+import { AddToHomeRow } from "./AddToHome";
 import * as M from "../lib/mock";
 import { dt, plural } from "../lib/format";
 import { haptic } from "../lib/tg";
@@ -64,6 +65,12 @@ export function Cabinet() {
             </div>
           </Press>
         </Glass>
+      </div>
+
+      {/* Постоянный вход к установке ярлыка: карточку на главной можно скрыть
+          навсегда, и без этой строки функция пропала бы вместе с ней. */}
+      <div className="px-4 mt-2.5">
+        <AddToHomeRow />
       </div>
 
       {/* ── Комиссия и подписка ────────────────────────────────────────────── */}

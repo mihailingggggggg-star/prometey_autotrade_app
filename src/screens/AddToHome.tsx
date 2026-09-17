@@ -50,13 +50,15 @@ export function AddToHomeCard({ onDone }: { onDone: () => void }) {
         </Press>
       </div>
 
-      <HowToSheet open={open} onClose={() => setOpen(false)}
+      <AddToHomeSheet open={open} onClose={() => setOpen(false)}
                   onDone={() => { hideCard(); setOpen(false); onDone(); }} />
     </>
   );
 }
 
-function HowToSheet({ open, onClose, onDone }: {
+/** Инструкция и кнопки установки. Экспортируется отдельно: в кабинете есть
+ *  постоянный вход сюда, не зависящий от того, скрыта ли карточка на главной. */
+export function AddToHomeSheet({ open, onClose, onDone }: {
   open: boolean; onClose: () => void; onDone: () => void;
 }) {
   const { demo } = useApp();
@@ -187,5 +189,46 @@ function Step({ n, icon, text, last }: {
       </div>
       <span className="shrink-0 mt-0.5" style={{ color: "var(--label-3)" }}>{icon}</span>
     </div>
+  );
+}
+
+/**
+ * Постоянный вход в кабинете — строкой под кошельком бота.
+ *
+ * Карточку на главной можно скрыть насовсем, и тогда способа вернуться к
+ * установке не осталось бы вовсе: человек, отмахнувшийся один раз, потерял бы
+ * функцию навсегда. Здесь она живёт всегда.
+ */
+export function AddToHomeRow() {
+  const [open, setOpen] = useState(false);
+  const installed = standalone();
+  return (
+    <>
+      <Glass flat className="overflow-hidden">
+        <button type="button" disabled={installed}
+                onClick={() => { haptic.tap(); setOpen(true); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left">
+          <span className="flex items-center justify-center w-8 h-8 rounded-[9px] shrink-0"
+                style={{ background: "var(--label-3)",
+                         color: installed ? "var(--green)" : "var(--tint)" }}>
+            {installed ? <Check size={16} /> : <Smartphone size={16} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px]">
+              {installed ? "Приложение установлено" : "Ярлык на экране смартфона"}
+            </span>
+            <span className="block text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
+              {installed
+                ? "открывается с рабочего стола, без Telegram"
+                : "открывать одним касанием, без Telegram"}
+            </span>
+          </span>
+          {!installed && <SquarePlus size={17} style={{ color: "var(--label-3)" }} />}
+        </button>
+      </Glass>
+
+      <AddToHomeSheet open={open} onClose={() => setOpen(false)}
+                      onDone={() => setOpen(false)} />
+    </>
   );
 }
