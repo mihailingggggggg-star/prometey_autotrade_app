@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, KeyRound, MessageSquareLock, Phone, Server } from "lucide-react";
+import { ArrowRight, Check, KeyRound, MessageSquareLock, Phone, RefreshCw,
+         Server } from "lucide-react";
 import { Glass, Press } from "../ui/kit";
 import { API_BASE, authConfirm, authRequest, hasApi, parseCode, applyCode,
          saveApi, saveSession } from "../lib/api";
+import { refreshApi } from "../lib/boot";
 import { haptic } from "../lib/tg";
 
 /**
@@ -15,14 +17,24 @@ import { haptic } from "../lib/tg";
  *
  * Telegram здесь нужен ровно для одного: доставить шесть цифр. Дальше
  * приложение живёт само.
+ *
+ * ЭКРАН ОДИН, и это важно. Раньше приложение, открытое без адреса бота,
+ * начинало с вопроса «укажите адрес сервера» — то есть встречало человека
+ * задачей, которую он не ставил и ответа на которую у него нет. Адрес теперь
+ * ищется сам (ссылка → память → файл рядом с приложением, см. lib/boot.ts), а
+ * если не нашёлся — спрашивается ЗДЕСЬ ЖЕ, на экране входа, рядом с полем
+ * номера, а не вместо него.
  */
 export function WebLogin() {
-  const [step, setStep] = useState<"api" | "phone" | "code">(hasApi ? "phone" : "api");
+  const [step, setStep] = useState<"phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [left, setLeft] = useState(0);
+  /* Адрес бота либо неизвестен, либо по нему не отвечают: и то и другое лечится
+     одной и той же карточкой, поэтому состояние одно. */
+  const [addr, setAddr] = useState(!hasApi);
 
   useEffect(() => {
     if (!left) return;
@@ -39,7 +51,16 @@ export function WebLogin() {
       setLeft(30);
     } catch (e) {
       haptic.err();
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      /* Сеть не ответила вовсе — это не «неверный номер», а мёртвый адрес:
+         тоннель перезапустился, и сохранённый адрес больше никуда не ведёт.
+         Молчать об этом нельзя, иначе человек будет менять номер. */
+      if (/Failed to fetch|NetworkError|timed out|aborted|Load failed/i.test(msg)) {
+        setErr("Бот не отвечает по сохранённому адресу — он мог смениться.");
+        setAddr(true);
+      } else {
+        setErr(msg);
+      }
     } finally { setBusy(false); }
   };
 
@@ -66,13 +87,8 @@ export function WebLogin() {
            style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)",
                     boxShadow: "0 12px 32px -10px var(--tint)" }}>
         {step === "code" ? <KeyRound size={30} color="#fff" strokeWidth={2.2} />
-          : step === "api" ? <Server size={28} color="#fff" strokeWidth={2.2} />
           : <Phone size={28} color="#fff" strokeWidth={2.2} />}
       </div>
-
-      {step === "api" && (
-        <ApiStep onDone={() => setStep("phone")} />
-      )}
 
       {step === "phone" && (
         <>
@@ -88,15 +104,17 @@ export function WebLogin() {
                    style={{ color: "var(--label)" }} />
           </div>
           <Err text={err} />
-          <div className="flex-1" />
-          <Press feel="press" className="block w-full" disabled={busy || phone.length < 6}
-                 onClick={ask}>
+          <Press feel="press" className="block w-full mt-4"
+                 disabled={busy || phone.length < 6 || !hasApi} onClick={ask}>
             <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white
                             flex items-center justify-center gap-2"
-                 style={{ background: busy || phone.length < 6 ? "var(--label-3)" : "var(--tint)" }}>
+                 style={{ background: busy || phone.length < 6 || !hasApi
+                          ? "var(--label-3)" : "var(--tint)" }}>
               {busy ? "Отправляем…" : <>Получить код <ArrowRight size={18} /></>}
             </div>
           </Press>
+          {addr && <Addr />}
+          <div className="flex-1" />
           <CodeFallback />
         </>
       )}
@@ -136,43 +154,73 @@ export function WebLogin() {
   );
 }
 
-/** Адреса бота нет — значит ярлык открыт без него. Просим адрес или код
- *  подключения: без адреса спросить код в Telegram попросту некого. */
-function ApiStep({ onDone }: { onDone: () => void }) {
+/**
+ * Адрес бота — вспомогательным блоком под полем номера.
+ *
+ * Показывается, только если адрес не нашёлся сам или по нему не отвечают: код
+ * в Telegram просить некого, пока неизвестно, у кого спрашивать. Первая кнопка
+ * — «поискать заново»: адрес публикуется рядом с приложением, и после его
+ * смены достаточно перечитать файл, ничего не набирая руками.
+ */
+function Addr() {
   const [url, setUrl] = useState("");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const again = async () => {
+    setBusy(true); setErr("");
+    try {
+      await refreshApi();
+      location.reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
   return (
-    <>
-      <h1 className="text-[30px] font-bold tracking-[-0.03em] leading-tight">Адрес бота</h1>
-      <p className="text-[16px] mt-2 leading-snug" style={{ color: "var(--label-2)" }}>
-        Приложение открыто без адреса сервера. Возьмите его в боте командой
-        <b> /web</b> — там же есть готовый код подключения.
-      </p>
-      <div className="glass glass-flat flex items-center mt-6 px-4">
-        <Server size={17} style={{ color: "var(--label-2)" }} />
+    <Glass flat className="p-3.5 mt-4">
+      <div className="flex items-start gap-2.5">
+        <Server size={18} style={{ color: "var(--orange)" }} className="shrink-0 mt-0.5" />
+        <div className="text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
+          {hasApi
+            ? <>Сохранён адрес <span className="break-all">{API_BASE}</span> — бот по нему
+                не отвечает. Адрес тоннеля меняется при рестарте.</>
+            : <>Приложение не знает, где искать бота. Возьмите адрес в боте командой
+                <b> /web</b> — там же есть кнопка «Открыть в браузере» и код подключения.</>}
+        </div>
+      </div>
+      <Press className="block w-full mt-3" disabled={busy} onClick={again}>
+        <div className="py-2.5 rounded-[14px] text-center text-[14px] font-medium
+                        flex items-center justify-center gap-2"
+             style={{ background: "var(--label-3)", color: "var(--label)" }}>
+          <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
+          {busy ? "Ищем…" : "Поискать адрес заново"}
+        </div>
+      </Press>
+      <div className="glass glass-flat flex items-center mt-2.5 px-3">
         <input value={url} onChange={(e) => { setUrl(e.target.value); setErr(""); }}
                placeholder="https://…trycloudflare.com" inputMode="url" spellCheck={false}
-               className="flex-1 bg-transparent outline-none py-3.5 px-3 text-[15px]"
+               className="flex-1 bg-transparent outline-none py-3 px-1.5 text-[14px]"
                style={{ color: "var(--label)" }} />
+        <Press disabled={!url.trim()}
+               onClick={() => {
+                 try {
+                   const v = url.trim();
+                   if (v.startsWith("PR1-")) { applyCode(parseCode(v)); location.reload(); return; }
+                   saveApi(v); haptic.ok(); location.reload();
+                 } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+               }}>
+          <span className="text-[14px] font-medium px-1"
+                style={{ color: url.trim() ? "var(--tint)" : "var(--label-3)" }}>Задать</span>
+        </Press>
       </div>
       <Err text={err} />
-      <div className="flex-1" />
-      <Press feel="press" className="block w-full" disabled={!url.trim()}
-             onClick={() => {
-               try {
-                 if (url.trim().startsWith("PR1-")) { applyCode(parseCode(url)); location.reload(); return; }
-                 saveApi(url); haptic.ok(); onDone(); location.reload();
-               } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-             }}>
-        <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white"
-             style={{ background: url.trim() ? "var(--tint)" : "var(--label-3)" }}>Продолжить</div>
-      </Press>
-    </>
+    </Glass>
   );
 }
 
-/** Запасной путь: целиком готовый код из бота. Нужен, когда номер под рукой,
- *  а Telegram — нет (например, вошли с чужого устройства). */
+/** Запасной путь: целиком готовый код из бота. Внутри него и адрес, и ключ
+ *  доступа — одна вставка вместо номера, кода и адреса. */
 function CodeFallback() {
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");

@@ -1,9 +1,5 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
 import "./theme.css";
-import { App } from "./App";
-import { AppProvider } from "./lib/store";
-import { Boom } from "./ui/Boom";
+import { bootApi } from "./lib/boot";
 import { inTelegram, initTelegram } from "./lib/tg";
 
 initTelegram();
@@ -20,12 +16,14 @@ function frame() {
 frame();
 window.addEventListener("resize", frame);
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <Boom>
-      <AppProvider>
-        <App />
-      </AppProvider>
-    </Boom>
-  </StrictMode>
-);
+/**
+ * Приложение поднимается ПОСЛЕ того, как выяснен адрес бота.
+ *
+ * Иначе нельзя: api.ts читает адрес в момент импорта, а половина приложения
+ * решает по нему, показывать настоящий счёт или демонстрацию. Сначала
+ * `bootApi()` (ссылка → память → сборка → файл рядом с приложением), и только
+ * потом динамический импорт — он и тянет за собой api.ts.
+ */
+void bootApi()
+  .then(() => import("./mount"))
+  .then((m) => m.mount());
