@@ -157,6 +157,17 @@ export function Cabinet() {
                     setPlans(false);
                     setPay({ title: `Подписка · ${p.label}`, amount: p.price, note: "комиссия снизится до 4%" }); }} />
 
+      {/* Версия сборки и состояние связи. Диагностика, а не украшение:
+          кэш вебвью Telegram живёт своей жизнью, и «у меня нет кнопки» должно
+          отличаться от «у меня открыта вчерашняя версия». */}
+      <div className="px-4 mt-5 mb-1 text-center text-[11px] leading-relaxed"
+           style={{ color: "var(--label-3)" }}>
+        сборка {__BUILD__} · бот{" "}
+        {a.link === "ok" ? "на связи" : a.link === "off" ? "не подключён"
+          : a.link === "denied" ? "не признал доступ" : "не отвечает"}
+        {a.me ? ` · вы ${a.me.role === "admin" ? "владелец" : "пользователь"}` : ""}
+      </div>
+
       <BotSettings open={settings} onClose={() => setSettings(false)} />
 
       <ApiSheet open={apiSheet} onClose={() => setApiSheet(false)} onGuide={() => { setApiSheet(false); setGuide(true); }} />

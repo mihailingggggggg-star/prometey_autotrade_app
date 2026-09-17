@@ -8,3 +8,6 @@ interface ImportMetaEnv {
   readonly VITE_DEV_TOKEN?: string;
 }
 interface ImportMeta { readonly env: ImportMetaEnv }
+
+/** Отметка времени сборки, подставляется Vite. */
+declare const __BUILD__: string;

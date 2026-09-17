@@ -8,7 +8,13 @@ import tailwindcss from "@tailwindcss/vite";
  * ведут в корень домена, то есть в 404. Имя вынесено в переменную: переедет
  * репозиторий — правится одно место, а не конфиг сборки.
  */
+/* Отметка сборки видна в кабинете. Без неё «у меня нет кнопки» неотличимо от
+   «у меня открыта вчерашняя версия из кэша», а кэш вебвью Telegram живёт
+   своей жизнью. */
+const BUILD = new Date().toISOString().slice(0, 16).replace("T", " ");
+
 export default defineConfig({
+  define: { __BUILD__: JSON.stringify(BUILD) },
   base: process.env.VITE_BASE || "/prometey_autotrade_app/",
   plugins: [react(), tailwindcss()],
   server: { port: 5178, host: true },

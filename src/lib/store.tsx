@@ -57,6 +57,11 @@ type Ctx = {
   link: Link;               // связь с ботом: off (демо) / ok / denied / down
   demo: boolean;            // данные показываются учебные, а не со счёта
   me: ApiMe | null;         // профиль с сервера
+  /** Пройдена ли регистрация. Отдельно от `me.phoneOk`, потому что СТАРЫЙ бот
+   *  такого поля не отдаёт вовсе: интерфейс на Pages обновляется мгновенно, а
+   *  сервер — руками, и между этими моментами человек не должен оказаться
+   *  заперт на экране регистрации, которую нечем пройти. */
+  registered: boolean;
   /** Права приходят С СЕРВЕРА и не выводятся из роли на клиенте: решение о
    *  том, кому что можно, принимается в одном месте — там, где деньги. */
   can: { control: boolean; topupFree: boolean; demo: boolean };
@@ -221,8 +226,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /* Деньги СЕРВИСА (комиссионный счёт) живут в профиле на сервере. Локальное
      состояние остаётся только для демо-режима, где сервера нет вовсе. */
-  const balance = server.me ? server.me.balance : localBalance;
-  const owed = server.me ? server.me.owed : localOwed;
+  const balance = server.me ? (server.me.balance ?? 0) : localBalance;
+  const owed = server.me ? (server.me.owed ?? 0) : localOwed;
 
   const blocked = owed > balance;
   const riskAlert = shown.riskUsd > deposit * 0.05;
@@ -243,10 +248,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!p) return;
       setSub({ active: true, plan: p.label, until: Date.now() + p.months * 30 * 864e5 });
     },
-    // Ключи: их состояние знает сервер. Локальная заглушка остаётся для демо.
+    /* Ключи: их состояние знает сервер. Читаем ОСТОРОЖНО, через ?. — сервер
+       может оказаться старее интерфейса: Pages обновляется мгновенно, а бот
+       руками. Раньше на таком сервере приложение падало целиком, и человек
+       видел белый экран вместо недостающего поля. */
     api: server.me
-      ? { connected: server.me.api.connected,
-          key: server.me.api.tail ? `••••••••••••${server.me.api.tail}` : "",
+      ? { connected: Boolean(server.me.api?.connected),
+          key: server.me.api?.tail ? `••••••••••••${server.me.api.tail}` : "",
           secret: "••••••••••••••••" }
       : api,
     connectApi: (key, secret) =>
@@ -270,9 +278,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     mode: server.state?.mode ?? "demo",
     scheme: server.state?.scheme ?? null,
     me: server.me,
+    registered: server.me
+      ? ("phoneOk" in server.me ? Boolean(server.me.phoneOk) : true)
+      : false,
     can: server.me?.can
-      ? { control: server.me.can.control, topupFree: server.me.can.topupFree,
-          demo: server.me.can.demo }
+      ? { control: Boolean(server.me.can.control),
+          topupFree: Boolean(server.me.can.topupFree),
+          demo: Boolean(server.me.can.demo) }
       // Демо-режим: показываем всё, иначе прототип нечем смотреть.
       : { control: demo, topupFree: demo, demo: demo },
     act, busy, error, clearError: () => setError(""),

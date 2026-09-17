@@ -14,12 +14,20 @@
  *    ПОЛНЫЙ адрес текущей сессии, а ссылку на него подменяем на лету.
  */
 
+import { inTelegram } from "./tg";
+
 const BASE = import.meta.env.BASE_URL || "/";
 
-export const standalone = () =>
-  window.matchMedia("(display-mode: standalone)").matches ||
-  // iOS до сих пор сообщает об этом своим нестандартным способом.
-  (navigator as unknown as { standalone?: boolean }).standalone === true;
+export const standalone = () => {
+  // Внутри Telegram браузерной обвязки тоже нет, и display-mode там может
+  // оказаться standalone. Но это ОКНО МЕССЕНДЖЕРА, а не установленное
+  // приложение: сочти мы его установленным, предложение вынести ярлык на
+  // рабочий стол исчезло бы ровно там, где оно и нужно.
+  if (inTelegram) return false;
+  return window.matchMedia("(display-mode: standalone)").matches ||
+    // iOS до сих пор сообщает об этом своим нестандартным способом.
+    (navigator as unknown as { standalone?: boolean }).standalone === true;
+};
 
 let blobUrl = "";
 

@@ -13,7 +13,7 @@ import { Modal, Press } from "./ui/kit";
 import { TriangleAlert } from "lucide-react";
 
 export function App() {
-  const { stage, setStage, positions, blocked, link, me, error, clearError } = useApp();
+  const { stage, setStage, positions, blocked, link, registered, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>("home");
 
   /* Регистрация считается пройденной, когда ПОДТВЕРЖДЁН НОМЕР — а не когда
@@ -22,8 +22,8 @@ export function App() {
      Пропусти мы регистрацию по одной подписи, новый человек попадал бы сразу
      в кабинет, минуя единственный её шаг. */
   useEffect(() => {
-    if (link === "ok" && me?.phoneOk && stage === "auth") setStage("app");
-  }, [link, me?.phoneOk, stage, setStage]);
+    if (link === "ok" && registered && stage === "auth") setStage("app");
+  }, [link, registered, stage, setStage]);
 
   return (
     /* h-full, а не min-h-full: прокручивается main, страница стоит на месте —
