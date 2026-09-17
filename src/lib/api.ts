@@ -164,6 +164,20 @@ export const getPositions = (s?: AbortSignal) =>
 export const getTrades = (days = 0, s?: AbortSignal) =>
   get<{ trades: ApiTrade[]; mode: string }>(`/api/trades?days=${days}&limit=500`, s);
 
+export type ApiSignal = {
+  id: string; symbol: string; side: "long" | "short"; score: number; whale: boolean;
+  at: number; status: string; entryType: "market" | "limit";
+  pnl: number | null; r: number | null;
+};
+export const getSignals = (s?: AbortSignal) =>
+  get<{ signals: ApiSignal[]; mode: string }>("/api/signals", s);
+
+export type ApiPayment = {
+  id: string; at: number; kind: string; amount: number; note: string; status: string;
+};
+export const getPayments = (s?: AbortSignal) =>
+  get<{ payments: ApiPayment[] }>("/api/payments", s);
+
 /* ── Управление. Каждая ручка возвращает то, что сервер реально применил:
       верить своему представлению о результате нельзя — значение могло быть
       отвергнуто проверкой, и экран обязан показать настоящее состояние. ── */

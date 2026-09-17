@@ -7,8 +7,9 @@
  * задержку опроса и нагрузить бота работой, которую браузер делает сам.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getMe, getPositions, getState, getTrades, hasApi,
-         type ApiMe, type ApiPosition, type ApiState, type ApiTrade } from "./api";
+import { ApiError, getMe, getPayments, getPositions, getSignals, getState, getTrades,
+         hasApi, type ApiMe, type ApiPayment, type ApiPosition, type ApiSignal,
+         type ApiState, type ApiTrade } from "./api";
 
 const STATE_MS = 5000;
 const TRADES_MS = 60000;
@@ -21,6 +22,8 @@ export type Server = {
   state: ApiState | null;
   positions: ApiPosition[];
   trades: ApiTrade[];
+  signals: ApiSignal[];
+  payments: ApiPayment[];
   reload: () => void;
 };
 
@@ -30,16 +33,24 @@ export function useServer(): Server {
   const [state, setState] = useState<ApiState | null>(null);
   const [positions, setPositions] = useState<ApiPosition[]>([]);
   const [trades, setTrades] = useState<ApiTrade[]>([]);
+  const [signals, setSignals] = useState<ApiSignal[]>([]);
+  const [payments, setPayments] = useState<ApiPayment[]>([]);
   const denied = useRef(false);
 
   const pull = useCallback(async (withTrades: boolean) => {
     if (!hasApi || denied.current) return;
     try {
-      const [m, s, p] = await Promise.all([getMe(), getState(), getPositions()]);
+      const [m, s, p, sig] = await Promise.all([getMe(), getState(), getPositions(),
+                                                getSignals()]);
       setMe(m);
       setState(s);
       setPositions(p.positions);
-      if (withTrades) setTrades((await getTrades(0)).trades);
+      setSignals(sig.signals);
+      if (withTrades) {
+        const [t, pay] = await Promise.all([getTrades(0), getPayments()]);
+        setTrades(t.trades);
+        setPayments(pay.payments);
+      }
       setLink("ok");
     } catch (e) {
       // Отказ в доступе — состояние постоянное: повторять его каждые пять
@@ -64,5 +75,6 @@ export function useServer(): Server {
     return () => { clearInterval(a); clearInterval(b); document.removeEventListener("visibilitychange", vis); };
   }, [pull]);
 
-  return { link, me, state, positions, trades, reload: () => pull(true) };
+  return { link, me, state, positions, trades, signals, payments,
+           reload: () => pull(true) };
 }

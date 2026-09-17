@@ -35,7 +35,10 @@ export type Trade = {
 
 export type Signal = {
   id: string; symbol: string; side: Side; score: number;
-  at: number; status: "открыта" | "в очереди" | "лимитка" | "закрыта";
+  /** Статус приходит из журнала бота строкой: открыта, лимитка,
+   *  закрыта, снята. Перечислением его не запереть — в журнале
+   *  появится новый код, и экран упадёт на ровном месте. */
+  at: number; status: string;
   phase: string;
 };
 
@@ -43,7 +46,7 @@ export type NewsItem = { id: string; src: string; title: string; at: number; kin
 
 export type Payment = {
   id: string; at: number; kind: "комиссия" | "подписка" | "пополнение";
-  amount: number; note: string; status: "оплачено" | "ожидает";
+  amount: number; note: string; status: string;
 };
 
 const h = 3600e3, m = 60e3;

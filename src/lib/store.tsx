@@ -79,6 +79,8 @@ type Ctx = {
   clearError: () => void;
 
   trades: M.Trade[];
+  signals: M.Signal[];
+  payments: M.Payment[];
   riskAlert: boolean;       // риск > 5% депозита
 };
 
@@ -204,6 +206,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const trades = useMemo(
     () => (demo ? M.trades : server.trades.map(toTrade)), [demo, server.trades]);
 
+  /* Лента сигналов и платежи тоже приходят из БД бота. Раньше их изображали
+     списки в коде — то есть у денег не было ни истории, ни источника правды,
+     а «последние сигналы» не имели отношения к тому, что бот торговал. */
+  const signals = useMemo<M.Signal[]>(() => demo ? M.signals : server.signals.map((s) => ({
+    id: s.id, symbol: s.symbol, side: s.side, score: s.score, at: s.at,
+    status: s.status as M.Signal["status"],
+    phase: s.whale ? "кит" : s.entryType === "limit" ? "лимитка" : "по рынку",
+  })), [demo, server.signals]);
+
+  const payments = useMemo<M.Payment[]>(() => demo ? M.payments : server.payments.map((p) => ({
+    id: p.id, at: p.at, kind: p.kind as M.Payment["kind"], amount: p.amount,
+    note: p.note, status: p.status as M.Payment["status"],
+  })), [demo, server.payments]);
+
   const inPositions = useMemo(
     () => positions.reduce((s, p) => s + (p.size * p.entry) / p.lev, 0), [positions]);
 
@@ -243,7 +259,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (demo || !server.me?.can.topupFree) return void setBalance((b) => +(b + v).toFixed(2));
       void act("topup", () => API.topUp(v));
     },
-    sub, buyPlan: (id) => {
+    /* Подписка тоже лежит в БД бота. Показывать локальную заглушку рядом с
+       настоящим балансом значит обещать человеку тариф, которого у него нет. */
+    sub: server.me
+      ? { active: Boolean(server.me.subUntil && server.me.subUntil > Date.now()),
+          until: server.me.subUntil ?? null, plan: server.me.subPlan || null }
+      : sub,
+    buyPlan: (id) => {
       const p = M.PLANS.find((x) => x.id === id);
       if (!p) return;
       setSub({ active: true, plan: p.label, until: Date.now() + p.months * 30 * 864e5 });
@@ -312,7 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (demo) return void setOverrides((o) => ({ ...o, [id]: { tp, sl } }));
       void act("levels:" + id, () => API.setLevels(id, tp, sl));
     },
-    trades, riskAlert,
+    trades, signals, payments, riskAlert,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

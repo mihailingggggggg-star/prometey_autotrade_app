@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
+import { Check, Copy, ExternalLink, Share, Smartphone, SquarePlus, TriangleAlert } from "lucide-react";
 import { Glass, Press, Sheet } from "../ui/kit";
-import { hasSession, newSession, webLink } from "../lib/api";
+import { hasApi, hasSession, newSession, webLink } from "../lib/api";
 import { useApp } from "../lib/store";
 import { canInstall, install, personalizeManifest, standalone } from "../lib/pwa";
 import { haptic, inTelegram, isIOS, openExternal } from "../lib/tg";
@@ -65,6 +65,7 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [fail, setFail] = useState("");
   const ios = isIOS();
   // В браузере мы уже там, куда надо попасть, — остаётся сам ярлык.
   const inBrowser = !inTelegram;
@@ -80,16 +81,24 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
      погасил бы предыдущий — билет на человека один. */
   const openOutside = async () => {
     setBusy(true);
+    setFail("");
     try {
+      if (!hasApi) {
+        // Без адреса API веб-версии неоткуда брать данные: она откроется
+        // демонстрацией. Раньше мы так и делали молча — и человек получал
+        // ярлык на демо вместо своего счёта.
+        throw new Error("бот не передал адрес своего API — откройте мини-апп "
+                        + "кнопкой из панели бота, а не по прямой ссылке");
+      }
       const url = demo ? location.href : webLink((await newSession()).token);
       setLink(url);
       openExternal(url);
       haptic.ok();
-    } catch {
-      // Билет не дали — открываем как есть. Приложение честно покажет, что
-      // данные счёта недоступны, вместо того чтобы не открыться вовсе.
-      setLink(location.href);
-      openExternal(location.href);
+    } catch (e) {
+      // Ключ доступа не выдан — открывать НЕЛЬЗЯ: ярлык вёл бы на демо, и
+      // человек считал бы, что видит свой счёт. Лучше отказ с причиной.
+      haptic.err();
+      setFail(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -141,6 +150,19 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
           публикуйте. Открыв мини-апп в Telegram заново, вы сделаете старую
           ссылку недействительной.
         </p>
+
+        {fail && (
+          <Glass flat className="p-3.5 flex items-start gap-2.5">
+            <TriangleAlert size={18} style={{ color: "var(--orange)" }} className="shrink-0 mt-0.5" />
+            <div className="text-[13px] leading-snug">
+              <b>Ключ доступа не выдан.</b> {fail}
+              <div className="mt-1" style={{ color: "var(--label-2)" }}>
+                Чаще всего это значит, что бот на сервере старее приложения —
+                обновите его и попробуйте снова.
+              </div>
+            </div>
+          </Glass>
+        )}
 
         {!inBrowser && (
           <Press onClick={openOutside} disabled={busy} feel="press" className="block w-full">

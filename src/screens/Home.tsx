@@ -8,11 +8,11 @@ import { Aurora, Glass, GroupLabel, Modal, Press, Segmented, Sheet, Title, Row, 
 import { useApp, posPnl, isOpen } from "../lib/store";
 import * as M from "../lib/mock";
 import { useTickers } from "../lib/useMarket";
-import { haptic } from "../lib/tg";
+import { haptic, inTelegram } from "../lib/tg";
+import { hasSession } from "../lib/api";
 import { AddToHomeCard, homeCardHidden } from "./AddToHome";
 import type { Ticker } from "../lib/market";
 
-const SIG_SYMBOLS = M.signals.map((s) => s.symbol);
 import { money, pct, price, ago, plural, rr } from "../lib/format";
 import type { Tab } from "../nav/TabBar";
 
@@ -25,10 +25,15 @@ const PERIODS: { id: Period; label: string; days: number }[] = [
 ];
 
 export function Home({ onTab }: { onTab: (t: Tab) => void }) {
-  const { trades, positions, settings, setSettings, topUp, balance, feed, link, demo, can, busy } = useApp();
+  const { trades, positions, signals, mode, scheme, settings, setSettings, topUp, balance, feed, link, demo, can, busy } = useApp();
   // Подписка живёт на уровне экрана, а не в каждой карточке: шесть карточек
   // подняли бы шесть одинаковых подписок на один и тот же тикер.
-  const sigTicks = useTickers(SIG_SYMBOLS);
+  // Монеты для потока котировок берём из ЖИВОЙ ленты, а не из списка в коде.
+  // Открыты вне Telegram и без билета — данные взять неоткуда, и сказать об
+  // этом надо прямо: человек пришёл сюда за своим счётом.
+  const webNoKey = !inTelegram && !hasSession();
+  const sigSymbols = useMemo(() => [...new Set(signals.map((s) => s.symbol))], [signals]);
+  const sigTicks = useTickers(sigSymbols);
   const [period, setPeriod] = useState<Period>("w");
   const [detail, setDetail] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
@@ -140,10 +145,16 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
         <div className="px-4 mt-3">
           <Glass flat className="p-3.5 flex items-center gap-3">
             <FlaskConical size={20} style={{ color: "var(--tint)" }} />
+            {/* Три разные причины демо-режима, и лечатся они по-разному.
+                Общая фраза «показаны учебные данные» оставляла человека гадать,
+                что именно сломалось. */}
             <div className="text-[14px] leading-snug">
               {link === "denied"
                 ? "Бот не признал вас владельцем счёта — показаны учебные данные."
-                : "Демонстрация на учебных данных. Цены монет настоящие, сделки — нет."}
+                : webNoKey
+                  ? "Приложение открыто без ключа доступа, поэтому данные учебные. "
+                    + "Откройте мини-апп в Telegram и добавьте ярлык заново — ссылка обновится."
+                  : "Демонстрация на учебных данных. Цены монет настоящие, сделки — нет."}
             </div>
           </Glass>
         </div>
@@ -195,26 +206,51 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
       {/* ── Последние сигналы ──────────────────────────────────────────────── */}
       <GroupLabel>Последние сигналы</GroupLabel>
       <div className="scroll flex gap-2.5 px-4 pb-1" style={{ overflowX: "auto" }} data-coach="signals">
-        {M.signals.map((s) => <SignalCard key={s.id} s={s} tk={sigTicks[s.symbol]} />)}
+        {signals.length
+          ? signals.map((s) => <SignalCard key={s.id} s={s} tk={sigTicks[s.symbol]} />)
+          : (
+            /* Пусто — это нормальное состояние, а не ошибка: бот ждёт сигнал.
+               Молчаливая пустая полоса читалась бы как поломка. */
+            <Glass flat className="p-4 w-full text-center">
+              <div className="text-[14px]" style={{ color: "var(--label-2)" }}>
+                Сигналов пока нет — бот ждёт скринер
+              </div>
+            </Glass>
+          )}
       </div>
 
-      {/* ── Новости и сводки ───────────────────────────────────────────────── */}
-      <GroupLabel>Сводки и уведомления</GroupLabel>
+      {/* ── Сводка по счёту ────────────────────────────────────────────────
+          Раньше здесь лежала лента выдуманных новостей. Новостей у нас нет и
+          брать их неоткуда, а место занимала имитация. Показываем то, что
+          система про себя знает: режим счёта, схему выхода, риск. */}
+      <GroupLabel>Сводка</GroupLabel>
       <div className="px-4 space-y-2.5">
-        {M.news.map((n) => (
-          <Glass key={n.id} flat className="p-3.5 flex items-start gap-3">
-            <span className="flex items-center justify-center w-8 h-8 rounded-[9px] shrink-0"
-                  style={{ background: "var(--label-3)" }}>
-              {n.kind === "system" ? <Cpu size={16} /> : n.kind === "macro" ? <Globe size={16} /> : <Newspaper size={16} />}
-            </span>
-            <div className="min-w-0">
-              <div className="text-[15px] leading-snug">{n.title}</div>
-              <div className="text-[12px] mt-1" style={{ color: "var(--label-2)" }}>
-                {n.src} · {ago(n.at)}
-              </div>
+        <Glass flat className="p-3.5 flex items-start gap-3">
+          <span className="flex items-center justify-center w-8 h-8 rounded-[9px] shrink-0"
+                style={{ background: "var(--label-3)" }}><Cpu size={16} /></span>
+          <div className="min-w-0">
+            <div className="text-[15px] leading-snug">
+              Счёт {mode === "live" ? "боевой — торгуем реальными деньгами"
+                                    : "демо — сделки настоящие, деньги виртуальные"}
             </div>
-          </Glass>
-        ))}
+            <div className="text-[12px] mt-1" style={{ color: "var(--label-2)" }}>
+              риск ${settings.riskUsd} на сделку{scheme?.long ? ` · выход: ${scheme.long}` : ""}
+            </div>
+          </div>
+        </Glass>
+        <Glass flat className="p-3.5 flex items-start gap-3">
+          <span className="flex items-center justify-center w-8 h-8 rounded-[9px] shrink-0"
+                style={{ background: "var(--label-3)" }}><Radio size={16} /></span>
+          <div className="min-w-0">
+            <div className="text-[15px] leading-snug">
+              {settings.enabled ? "Приём сигналов включён" : "Приём сигналов на паузе"}
+            </div>
+            <div className="text-[12px] mt-1" style={{ color: "var(--label-2)" }}>
+              открытых позиций: {live.length}
+              {waiting > 0 ? ` · лимиток в ожидании: ${waiting}` : ""}
+            </div>
+          </div>
+        </Glass>
       </div>
 
       <div className="px-4 mt-4">

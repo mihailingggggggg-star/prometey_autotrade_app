@@ -177,8 +177,12 @@ export function Cabinet() {
       <Sheet open={history} onClose={() => setHistory(false)} title="История оплат">
         <div className="pb-3">
           <Glass flat className="overflow-hidden">
-            {M.payments.map((p, i) => (
-              <Row key={p.id} last={i === M.payments.length - 1}
+            {!a.payments.length && (
+              <Row last title="Платежей пока нет"
+                   note="здесь появятся комиссии, подписки и пополнения" />
+            )}
+            {a.payments.map((p, i) => (
+              <Row key={p.id} last={i === a.payments.length - 1}
                    icon={p.kind === "подписка" ? <BadgeCheck size={16} />
                        : p.kind === "пополнение" ? <Wallet size={16} /> : <Percent size={16} />}
                    title={<span className="capitalize">{p.kind}</span>}
