@@ -19,9 +19,35 @@ import { standalone } from "./pwa";
 
 const qs = new URLSearchParams(location.search);
 
-export const API_BASE = (qs.get("api") || import.meta.env.VITE_API_BASE || "")
-  .replace(/\/+$/, "");
+/**
+ * Адрес API ЗАПОМИНАЕТСЯ. Приходит он параметром `?api=` от бота, но
+ * приложение, запущенное с ярлыка, открывается по своему start_url — и если
+ * адреса в нём не окажется, обращаться будет некуда, и человек увидит
+ * демонстрацию вместо своего счёта. Именно так это и выглядело.
+ *
+ * Поэтому: параметр (он главнее — адрес тоннеля меняется) → запомненный →
+ * заданный при сборке.
+ */
+const API_KEY = "prometey.api";
+
+function readApi(): string {
+  const fromUrl = (qs.get("api") || "").replace(/\/+$/, "");
+  try {
+    if (fromUrl) {
+      localStorage.setItem(API_KEY, fromUrl);
+      return fromUrl;
+    }
+    return (localStorage.getItem(API_KEY) || import.meta.env.VITE_API_BASE || "")
+      .replace(/\/+$/, "");
+  } catch {
+    return fromUrl || (import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
+  }
+}
+
+export const API_BASE = readApi();
 export const hasApi = Boolean(API_BASE);
+/** Адрес взят из памяти, а не из ссылки: он мог протухнуть вместе с тоннелем. */
+export const apiRemembered = Boolean(!qs.get("api") && API_BASE);
 
 /** Отладочный ключ — только чтобы смотреть настоящие данные из браузера, где
  *  Telegram initData взять негде. На сервере по умолчанию выключен. */

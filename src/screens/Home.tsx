@@ -9,7 +9,7 @@ import { useApp, posPnl, isOpen } from "../lib/store";
 import * as M from "../lib/mock";
 import { useTickers } from "../lib/useMarket";
 import { haptic, inTelegram } from "../lib/tg";
-import { hasSession } from "../lib/api";
+import { apiRemembered, hasSession } from "../lib/api";
 import { AddToHomeCard, homeCardHidden } from "./AddToHome";
 import type { Ticker } from "../lib/market";
 
@@ -160,12 +160,39 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
         </div>
       )}
 
+      {/* Вошли, данные настоящие — но счёт не ваш, и потому всё по нулям.
+          Без этой строки человек видит пустой экран и читает его как поломку
+          или как «демо-версию»: ровно та жалоба, с которой это и нашлось. */}
+      {!demo && link === "ok" && !can.control && (
+        <div className="px-4 mt-3">
+          <Glass flat className="p-3.5 flex items-start gap-3">
+            <Lock size={20} className="mt-0.5 shrink-0" style={{ color: "var(--label-2)" }} />
+            <div className="text-[14px] leading-snug">
+              Вы вошли как пользователь — торговый счёт принадлежит владельцу,
+              поэтому позиций и истории здесь нет.
+              <div className="text-[12px] mt-1" style={{ color: "var(--label-2)" }}>
+                Доступ к счёту открывается по подтверждённому номеру телефона.
+                Кабинет → «Проверка связи» покажет, что именно не так.
+              </div>
+            </div>
+          </Glass>
+        </div>
+      )}
+
       {link === "down" && (
         <div className="px-4 mt-3">
-          <Glass flat className="p-3.5 flex items-center gap-3">
-            <ServerCrash size={20} style={{ color: "var(--orange)" }} />
+          <Glass flat className="p-3.5 flex items-start gap-3">
+            <ServerCrash size={20} className="mt-0.5 shrink-0" style={{ color: "var(--orange)" }} />
             <div className="text-[14px] leading-snug">
-              Бот не отвечает. Показано последнее известное состояние счёта.
+              Бот не отвечает.
+              {apiRemembered ? (
+                /* Публичный адрес бота живёт до перезапуска тоннеля. Ярлык,
+                   сохранённый вчера, сегодня может смотреть в пустоту — и это
+                   надо сказать прямо, а не оставлять человека с «не
+                   отвечает». */
+                <span> Возможно, сменился его адрес: откройте мини-апп
+                  в Telegram и добавьте ярлык заново — ссылка обновится.</span>
+              ) : <span> Показано последнее известное состояние счёта.</span>}
             </div>
           </Glass>
         </div>

@@ -9,12 +9,14 @@ import { Market } from "./screens/Market";
 import { Trades } from "./screens/Trades";
 import { Cabinet } from "./screens/Cabinet";
 import { DebtGate } from "./screens/DebtGate";
+import { Lock, useLock } from "./screens/Lock";
 import { Modal, Press } from "./ui/kit";
 import { TriangleAlert } from "lucide-react";
 
 export function App() {
   const { stage, setStage, positions, blocked, link, registered, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>("home");
+  const lock = useLock();
 
   /* Регистрация считается пройденной, когда ПОДТВЕРЖДЁН НОМЕР — а не когда
      бот узнал нас по подписи. Подпись говорит лишь «это тот же Telegram-
@@ -31,9 +33,13 @@ export function App() {
     <div className="relative h-full">
       <div className="mesh" />
 
-      {stage === "auth" && <Auth />}
+      {/* Замок стоит ПЕРЕД всем: под ним лежит ключ доступа к счёту, и
+          показывать что-либо до подтверждения незачем. */}
+      {lock.locked && <Lock busy={lock.busy} ask={lock.ask} />}
 
-      {stage !== "auth" && (
+      {!lock.locked && stage === "auth" && <Auth />}
+
+      {!lock.locked && stage !== "auth" && (
         <>
           <main className="relative z-10 h-full scroll"
                 style={{ paddingTop: "var(--safe-t)",
