@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" style="color-scheme: dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <!-- Цвет до загрузки CSS: иначе первый кадр белый, и на тёмной теме это
+         вспышка в глаза. -->
+    <meta name="theme-color" content="#000000" />
+    <title>PROMETHEUS · автотрейд</title>
+    <style>html,body{background:#000;margin:0}</style>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Заглушка альбомной ориентации. Статичной разметкой, а не React-экраном:
+         она должна работать и до монтирования приложения. -->
+    <div id="rotate">
+      <b>Переверните телефон</b>
+      Интерфейс рассчитан на вертикальную ориентацию
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

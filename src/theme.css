@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Дизайн-токены. Тема ОДНА — тёмная (решение владельца 17.09.2026), поэтому
+   светлого набора здесь нет вовсе, а не «есть, но не используется»: второй
+   набор переменных рано или поздно разъезжается с первым, и половина экранов
+   начинает жить по неактуальной палитре. Захотим светлую обратно — это
+   отдельный блок `:root[data-theme="light"]`, а не правка этих значений.
+
+   Значения — системные цвета iOS в тёмном оформлении (systemBlue #0a84ff,
+   systemGreen #30d158, systemRed #ff453a), шкала кегля и радиусы по Apple HIG:
+   17pt body, 34pt largeTitle, радиус карточки 16–22.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  --ease-spring: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%,
+                        0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%,
+                        1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001);
+
+  --bg:            #000000;   /* systemBackground (dark) */
+  --bg-elev:       #1c1c1e;
+  --label:         #ffffff;
+  --label-2:       rgba(235,235,245,.6);
+  --label-3:       rgba(235,235,245,.3);
+  --separator:     rgba(84,84,88,.65);
+  --tint:          #0a84ff;
+  --green:         #30d158;
+  --red:           #ff453a;
+  --orange:        #ff9f0a;
+  --yellow:        #ffd60a;
+
+  --glass-bg:      rgba(28,28,30,.58);
+  --glass-brd-a:   rgba(255,255,255,.22);
+  --glass-brd-b:   rgba(255,255,255,.04);
+  --glass-shadow:  0 1px 2px rgba(0,0,0,.4), 0 12px 32px -10px rgba(0,0,0,.7);
+  --mesh-1: #1d4ed8; --mesh-2: #6d28d9; --mesh-3: #0f766e;
+
+  --tabbar-h: 52px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+
+  /* Пропорции телефона для десктопной рамки: iPhone 15 Pro, 393×852. */
+  --phone-w: 393;
+  --phone-h: 852;
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Скроллит ВНУТРЕННИЙ контейнер (main), а не страница: панель вкладок
+   приклеена к низу окна, и прокрутка body уводила бы её из-под пальца.
+   То же самое делает рамку на десктопе возможной — ей нужна точная высота. */
+html, body, #root { height: 100%; overflow: hidden; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: 17px;              /* iOS body */
+  line-height: 1.29;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  /* Цифры не должны «прыгать» при обновлении PnL в реальном времени. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Подложка: мягкие цветные пятна. Без неё размывать нечего и «стекло»
+   читается как плоская плашка — тот же урок, что на карточках дайджеста.
+   Проценты, а не vh/vw: внутри десктопной рамки единицы окна дали бы пятна
+   размером с монитор. */
+.mesh {
+  position: fixed; inset: -20% -12%; z-index: 0; pointer-events: none;
+  filter: blur(70px) saturate(140%);
+  opacity: .32;
+  background:
+    radial-gradient(38% 38% at 12% 8%,  var(--mesh-1) 0%, transparent 62%),
+    radial-gradient(42% 42% at 88% 14%, var(--mesh-2) 0%, transparent 60%),
+    radial-gradient(46% 46% at 50% 92%, var(--mesh-3) 0%, transparent 64%);
+}
+
+/* ── Жидкое стекло ────────────────────────────────────────────────────────── */
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: var(--glass-shadow);
+  border-radius: 22px;
+  isolation: isolate;
+}
+/* Тонкая ГРАДИЕНТНАЯ рамка в 1px: обычный border одним цветом даёт плоский
+   контур, а стеклу нужен блик сверху и затухание снизу. */
+.glass::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(160deg, var(--glass-brd-a), var(--glass-brd-b) 55%, transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  pointer-events: none;
+}
+.glass-flat { border-radius: 16px; }
+
+/* Панель навигации и шапка — то же стекло, но сильнее размытие: под ними
+   проезжает контент, и он не должен читаться сквозь панель. */
+.chrome {
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  background: var(--glass-bg);
+}
+
+.hairline { box-shadow: inset 0 -0.5px 0 var(--separator); }
+.hairline-t { box-shadow: inset 0 0.5px 0 var(--separator); }
+
+.scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+
+/* Крупные числа — SF Pro Display c плотным трекингом, как в iOS-виджетах. */
+.num-hero {
+  font-size: 44px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.05;
+}
+
+/* ─── Рамка телефона на десктопе (класс вешает main.tsx) ──────────────────────
+   Мини-апп живёт в окне Telegram шириной с телефон. На широком мониторе без
+   рамки интерфейс растягивается на 1400px и выглядит совсем не так, как у
+   пользователя: шапки разъезжаются, «стекло» размывает пустоту, кнопки уходят
+   из зоны большого пальца. Поэтому #root получает ТОЧНЫЕ пропорции телефона.
+
+   transform на рамке — не украшение: он делает её containing block для
+   position:fixed внутри (панель вкладок, шторки, модалки, подсветка
+   онбординга). Без него они цеплялись бы за окно браузера и висели бы
+   снаружи рамки. */
+html.desk { background: #0e0e11; }
+html.desk body {
+  display: grid; place-items: center;
+  background:
+    radial-gradient(60% 60% at 50% 0%, #17171c 0%, #0e0e11 70%);
+}
+html.desk #root {
+  aspect-ratio: var(--phone-w) / var(--phone-h);
+  height: min(852px, 94dvh);
+  width: auto;
+  position: relative;
+  overflow: hidden;
+  transform: translateZ(0);
+  border-radius: 46px;
+  background: var(--bg);
+  box-shadow:
+    0 0 0 10px #17171a,
+    0 0 0 11px rgba(255,255,255,.10),
+    0 40px 90px -30px rgba(0,0,0,.9);
+}
+/* Вырез камеры — чтобы сразу считывалось, где у макета верх и сколько места
+   съедает системная зона. */
+html.desk #root::after {
+  content: ""; position: absolute; top: 9px; left: 50%; translate: -50% 0;
+  width: 108px; height: 30px; border-radius: 16px; background: #000;
+  z-index: 100; pointer-events: none;
+}
+html.desk { --safe-t: 42px; --safe-b: 20px; }
+
+/* ─── Только портрет ─────────────────────────────────────────────────────────
+   Горизонтальная ориентация не поддерживается (решение владельца): в альбомном
+   телефоне на контент остаётся ~380px высоты, куда не помещается ни шапка с
+   крупным числом, ни панель вкладок. Показать сломанный экран хуже, чем
+   попросить перевернуть. Порог по ВЫСОТЕ, а не только по ориентации: десктоп
+   тоже «альбомный», но там рамка. */
+#rotate { display: none; }
+@media (orientation: landscape) and (max-height: 520px) and (pointer: coarse) {
+  #root { display: none; }
+  #rotate {
+    display: flex; position: fixed; inset: 0; z-index: 200;
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: var(--bg); color: var(--label-2);
+    font-size: 15px; text-align: center; padding: 0 32px;
+  }
+  #rotate b { color: var(--label); font-size: 17px; font-weight: 600; }
+}
+
+
+/* ─── Aurora: живое сияние внутри стекла ──────────────────────────────────────
+   Композиция взята с готового MIT-компонента CodeFronts «Animated Mesh Gradient
+   Blob Background» (несколько радиальных узлов + слой зерна поверх). ТЕХНИКА
+   ДВИЖЕНИЯ заменена намеренно: в оригинале анимируются координаты градиента
+   через @property, а это ПЕРЕРИСОВКА всего размытого слоя каждый кадр — на
+   телефоне поверх работающего графика это самый дорогой способ из возможных.
+
+   Здесь слои статичные, а двигаются только transform и opacity: такие
+   свойства браузер отдаёт композитору, то есть после первой отрисовки ни
+   JS, ни перерисовки нет вообще — анимация живёт отдельно от основного потока
+   и не спорит ни с прокруткой, ни с тиками цены.
+
+   Три узла с разной длительностью (19/26/31с) и alternate: периоды не кратны,
+   поэтому рисунок не повторяется заметным циклом. */
+.aurora {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  border-radius: inherit; overflow: hidden;
+  /* Свой слой композитора — иначе блики тянут за собой перерисовку соседей. */
+  contain: paint;
+}
+.aurora i {
+  position: absolute; display: block; border-radius: 50%;
+  will-change: transform;
+}
+.aurora__a {
+  width: 78%; padding-bottom: 78%; right: -14%; top: -34%;
+  background: radial-gradient(circle at 42% 42%,
+              #4aa8ff 0%, #1f6fe8 38%, rgba(29,78,216,.45) 58%, transparent 72%);
+  filter: blur(26px);
+  animation: aurora-a 26s var(--ease-io) infinite alternate;
+}
+.aurora__b {
+  width: 58%; padding-bottom: 58%; right: 2%; top: -6%;
+  background: radial-gradient(circle at 50% 50%,
+              #8b5cf6 0%, rgba(109,40,217,.55) 45%, transparent 70%);
+  filter: blur(30px); opacity: .75;
+  animation: aurora-b 31s var(--ease-io) infinite alternate;
+}
+/* Яркое ядро: без него пятно читается как заливка, а не как свет. */
+.aurora__c {
+  width: 26%; padding-bottom: 26%; right: 16%; top: 4%;
+  background: radial-gradient(circle at 50% 50%, #cfe6ff 0%, #6fb6ff 45%, transparent 70%);
+  filter: blur(18px); opacity: .55;
+  animation: aurora-c 19s var(--ease-io) infinite alternate;
+}
+/* Зерно — статичная SVG-текстура из того же компонента. Стоит один раз при
+   отрисовке и убирает бандинг, который на больших размытых пятнах виден
+   полосами. */
+.aurora__grain {
+  position: absolute; inset: 0; opacity: .13; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+@keyframes aurora-a {
+  0%   { transform: translate3d(0,0,0) scale(1); }
+  50%  { transform: translate3d(-9%, 7%, 0) scale(1.12); }
+  100% { transform: translate3d(4%, -5%, 0) scale(0.96); }
+}
+@keyframes aurora-b {
+  0%   { transform: translate3d(0,0,0) scale(1); opacity: .75; }
+  50%  { transform: translate3d(-16%, 12%, 0) scale(1.18); opacity: .5; }
+  100% { transform: translate3d(6%, 4%, 0) scale(0.92); opacity: .8; }
+}
+@keyframes aurora-c {
+  0%   { transform: translate3d(0,0,0) scale(1); opacity: .5; }
+  50%  { transform: translate3d(-22%, 16%, 0) scale(1.3); opacity: .7; }
+  100% { transform: translate3d(10%, -8%, 0) scale(0.9); opacity: .45; }
+}
+:root { --ease-io: cubic-bezier(.45,0,.55,1); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  /* Сияние не «ускоряем до нуля», а просто останавливаем в исходной позе:
+     нулевая длительность у alternate-анимации даёт мигание. */
+  .aurora i { animation: none !important; }
+}

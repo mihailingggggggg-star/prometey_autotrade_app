@@ -1,0 +1,208 @@
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, type ReactNode } from "react";
+import { X } from "lucide-react";
+import { haptic } from "../lib/tg";
+
+/* Пружина одна на всё приложение: разные кривые в соседних элементах читаются
+   как разное качество сборки. Значения — «упругий отскок» без перелёта. */
+export const SPRING = { type: "spring", stiffness: 520, damping: 30, mass: 0.7 } as const;
+export const SPRING_SOFT = { type: "spring", stiffness: 260, damping: 26 } as const;
+
+/** Всё нажимаемое оборачивается сюда: сжатие + хаптика + упругий возврат. */
+export function Press({
+  children, onClick, className = "", disabled, scale = 0.955, feel = "tap",
+}: {
+  children: ReactNode; onClick?: () => void; className?: string;
+  disabled?: boolean; scale?: number; feel?: "tap" | "press" | "heavy";
+}) {
+  return (
+    <motion.button
+      type="button"
+      disabled={disabled}
+      whileTap={disabled ? undefined : { scale }}
+      transition={SPRING}
+      onClick={() => { if (disabled) return; haptic[feel](); onClick?.(); }}
+      className={`appearance-none text-left disabled:opacity-40 ${className}`}
+    >
+      {children}
+    </motion.button>
+  );
+}
+
+export function Glass({ children, className = "", flat, style }: {
+  children: ReactNode; className?: string; flat?: boolean; style?: React.CSSProperties;
+}) {
+  return <div className={`glass ${flat ? "glass-flat" : ""} ${className}`} style={style}>{children}</div>;
+}
+
+export function Title({ children, sub }: { children: ReactNode; sub?: ReactNode }) {
+  return (
+    <div className="px-5 pt-1 pb-3">
+      <h1 className="text-[34px] font-bold tracking-[-0.03em] leading-tight">{children}</h1>
+      {sub && <p className="text-[15px] mt-0.5" style={{ color: "var(--label-2)" }}>{sub}</p>}
+    </div>
+  );
+}
+
+export function GroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-5 pt-5 pb-2 text-[13px] uppercase tracking-wide font-medium"
+         style={{ color: "var(--label-2)" }}>{children}</div>
+  );
+}
+
+/** Сегментный контрол iOS: подложка едет за выбором через layoutId. */
+export function Segmented<T extends string>({
+  value, onChange, options, size = "md",
+}: { value: T; onChange: (v: T) => void; options: { id: T; label: string }[]; size?: "sm" | "md" }) {
+  return (
+    <div className="glass glass-flat p-[3px] flex gap-[3px] rounded-[11px]">
+      {options.map((o) => (
+        <button key={o.id} onClick={() => { haptic.select(); onChange(o.id); }}
+          className={`relative flex-1 rounded-[9px] ${size === "sm" ? "py-1 text-[13px]" : "py-1.5 text-[14px]"} font-medium`}
+          style={{ color: value === o.id ? "var(--label)" : "var(--label-2)" }}>
+          {value === o.id && (
+            <motion.span layoutId="seg" transition={SPRING}
+              className="absolute inset-0 rounded-[9px]"
+              style={{ background: "var(--bg-elev)", boxShadow: "0 1px 3px rgba(0,0,0,.14)" }} />
+          )}
+          <span className="relative z-10">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Нижняя шторка: подъезжает пружиной, тянется вниз пальцем, фон размывается. */
+export function Sheet({
+  open, onClose, title, children, tall,
+}: { open: boolean; onClose: () => void; title?: string; children: ReactNode; tall?: boolean }) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end">
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0"
+            style={{ background: "rgba(0,0,0,.35)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }} />
+          <motion.div
+            drag="y" dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.45 }}
+            onDragEnd={(_, i) => { if (i.offset.y > 110 || i.velocity.y > 700) { haptic.tap(); onClose(); } }}
+            initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={SPRING_SOFT}
+            className="glass relative w-full"
+            style={{
+              borderRadius: "22px 22px 0 0",
+              maxHeight: tall ? "92%" : "82%",
+              paddingBottom: "calc(20px + var(--safe-b))",
+            }}>
+            <div className="pt-2.5 pb-1 flex justify-center">
+              <div className="w-9 h-[5px] rounded-full" style={{ background: "var(--label-3)" }} />
+            </div>
+            {title && (
+              <div className="px-5 pb-2 flex items-center justify-between">
+                <h2 className="text-[20px] font-bold tracking-[-0.02em]">{title}</h2>
+                <Press onClick={onClose} className="rounded-full p-1.5"
+                       aria-label="Закрыть">
+                  <span className="flex items-center justify-center w-7 h-7 rounded-full"
+                        style={{ background: "var(--label-3)" }}>
+                    <X size={15} strokeWidth={2.6} />
+                  </span>
+                </Press>
+              </div>
+            )}
+            <div className="scroll px-5" style={{ maxHeight: tall ? "78%" : "66%" }}>{children}</div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** Модалка по центру — для блокирующих сообщений (долг, подтверждение закрытия). */
+export function Modal({
+  open, onClose, children, dismissable = true,
+}: { open: boolean; onClose: () => void; children: ReactNode; dismissable?: boolean }) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => dismissable && onClose()}
+            className="absolute inset-0"
+            style={{ background: "rgba(0,0,0,.45)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }} />
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.94, opacity: 0 }} transition={SPRING}
+            className="glass relative w-full max-w-[380px] p-5">
+            {children}
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+export function Row({
+  icon, title, note, right, onClick, danger, last,
+}: {
+  icon?: ReactNode; title: ReactNode; note?: ReactNode; right?: ReactNode;
+  onClick?: () => void; danger?: boolean; last?: boolean;
+}) {
+  const body = (
+    <div className={`flex items-center gap-3 px-4 py-2.5 ${last ? "" : "hairline"}`}>
+      {icon && (
+        <span className="flex items-center justify-center w-[30px] h-[30px] rounded-[8px] shrink-0"
+              style={{ background: "var(--label-3)", color: danger ? "var(--red)" : "var(--label)" }}>
+          {icon}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-[16px] leading-tight truncate" style={{ color: danger ? "var(--red)" : "var(--label)" }}>
+          {title}
+        </div>
+        {note && <div className="text-[13px] mt-0.5 leading-snug" style={{ color: "var(--label-2)" }}>{note}</div>}
+      </div>
+      {right && <div className="text-[15px] shrink-0" style={{ color: "var(--label-2)" }}>{right}</div>}
+    </div>
+  );
+  return onClick ? <Press onClick={onClick} className="block w-full">{body}</Press> : body;
+}
+
+export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => { haptic.select(); onChange(!on); }}
+      className="w-[51px] h-[31px] rounded-full p-[2px] flex transition-colors"
+      style={{ background: on ? "var(--green)" : "var(--label-3)", justifyContent: on ? "flex-end" : "flex-start" }}>
+      <motion.span layout transition={SPRING}
+        className="block w-[27px] h-[27px] rounded-full bg-white"
+        style={{ boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />
+    </button>
+  );
+}
+
+export const money = (v: number) => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
+export const tone = (v: number) => (v > 0 ? "var(--green)" : v < 0 ? "var(--red)" : "var(--label-2)");
+
+/**
+ * Живое сияние для стеклянной карточки. Разметка пустая — вся анимация в CSS
+ * (`.aurora` в theme.css), поэтому React её не перерисовывает НИ РАЗУ: компонент
+ * монтируется один раз и дальше существует только на композиторе.
+ */
+export function Aurora() {
+  return (
+    <div className="aurora" aria-hidden>
+      <i className="aurora__a" />
+      <i className="aurora__b" />
+      <i className="aurora__c" />
+      <span className="aurora__grain" />
+    </div>
+  );
+}
