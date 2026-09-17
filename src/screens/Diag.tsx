@@ -3,6 +3,7 @@ import { Copy, Check, Fingerprint, Stethoscope } from "lucide-react";
 import { Glass, Press, Sheet, Toggle, Row } from "../ui/kit";
 import { API_BASE, apiRemembered, hasApi, hasSession } from "../lib/api";
 import { useApp } from "../lib/store";
+import { ConnectSheet } from "./Connect";
 import { bioEnabled, bioSupported, disableBio, enableBio } from "../lib/lock";
 import { haptic, inTelegram } from "../lib/tg";
 
@@ -87,6 +88,7 @@ function DiagSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { me, link, demo, mode, positions, trades } = useApp();
   const [health, setHealth] = useState("проверяем…");
   const [copied, setCopied] = useState(false);
+  const [connect, setConnect] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +138,13 @@ function DiagSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           признал вас владельцем счёта. Строка выше показывает, что именно.
         </p>
 
+        {!hasApi && !inTelegram && (
+          <Press onClick={() => setConnect(true)} feel="press" className="block w-full">
+            <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                 style={{ background: "var(--tint)" }}>Подключить счёт кодом</div>
+          </Press>
+        )}
+
         <Press onClick={() => { navigator.clipboard?.writeText(text); setCopied(true);
                                 haptic.ok(); setTimeout(() => setCopied(false), 1600); }}
                className="block w-full">
@@ -146,6 +155,8 @@ function DiagSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           </Glass>
         </Press>
       </div>
+
+      <ConnectSheet open={connect} onClose={() => setConnect(false)} />
     </Sheet>
   );
 }

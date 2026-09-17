@@ -262,3 +262,49 @@ export function webLink(token: string): string {
  *  получаем: бот торгует ключами из своего .env, а нам нужен только факт
  *  привязки и хвост ключа для показа. */
 export const linkKeys = () => post<ApiMe>("/api/keys/link", {});
+
+/* ── Код подключения ─────────────────────────────────────────────────────────
+   Ссылка с параметрами переживает ровно один переход: встроенный браузер
+   Telegram, Safari и приложение с рабочего стола — это ТРИ РАЗНЫХ хранилища.
+   Открыв ссылку в одном, во втором человек снова оказывается ни с чем. Код же
+   переносится куда угодно — скопировал и вставил. Внутри тот же адрес API и
+   тот же билет. */
+
+export type Connected = { api: string; token: string };
+
+/** Разобрать код. Бросает с человеческой причиной: «код неверный» без
+ *  объяснения заставляет гадать, тот ли код вообще скопирован. */
+export function parseCode(raw: string): Connected {
+  const code = raw.trim().replace(/\s+/g, "");
+  if (!code) throw new Error("пустая строка");
+  if (!code.startsWith("PR1-")) throw new Error("это не код подключения — он начинается с PR1-");
+  let json: string;
+  try {
+    const b = code.slice(4).replace(/-/g, "+").replace(/_/g, "/");
+    json = atob(b + "=".repeat((4 - (b.length % 4)) % 4));
+  } catch {
+    throw new Error("код повреждён — скопируйте его целиком");
+  }
+  let data: { a?: string; t?: string };
+  try { data = JSON.parse(json); } catch { throw new Error("код повреждён"); }
+  const api = (data.a || "").replace(/\/+$/, "");
+  if (!api.startsWith("https://") && !api.startsWith("http://"))
+    throw new Error("в коде нет адреса бота");
+  if (!data.t) throw new Error("в коде нет ключа доступа");
+  return { api, token: data.t };
+}
+
+/** Применить код: сохранить адрес и билет. Дальше нужна перезагрузка — адрес
+ *  API читается один раз при старте, и половина приложения уже живёт с ним. */
+export function applyCode(c: Connected) {
+  localStorage.setItem(API_KEY, c.api);
+  localStorage.setItem(SESSION_KEY, c.token);
+}
+
+/** Забыть подключение (выход из веб-версии). */
+export function forgetConnection() {
+  try {
+    localStorage.removeItem(API_KEY);
+    localStorage.removeItem(SESSION_KEY);
+  } catch { /* приватное окно */ }
+}

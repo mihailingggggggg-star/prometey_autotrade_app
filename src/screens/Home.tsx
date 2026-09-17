@@ -9,8 +9,9 @@ import { useApp, posPnl, isOpen } from "../lib/store";
 import * as M from "../lib/mock";
 import { useTickers } from "../lib/useMarket";
 import { haptic, inTelegram } from "../lib/tg";
-import { apiRemembered, hasSession } from "../lib/api";
+import { apiRemembered, hasApi, hasSession } from "../lib/api";
 import { AddToHomeCard, homeCardHidden } from "./AddToHome";
+import { ConnectCard } from "./Connect";
 import type { Ticker } from "../lib/market";
 
 import { money, pct, price, ago, plural, rr } from "../lib/format";
@@ -141,7 +142,11 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
       {/* Три РАЗНЫХ состояния, и путать их нельзя: демо — данные учебные;
           denied — бот жив, но доступ не ваш; down — бот не отвечает, и цифры
           на экране последние известные, а не текущие. */}
-      {demo && (
+      {/* Вне Telegram и без подключения показывать плашку «демо» мало — надо
+          дать способ это исправить, не возвращаясь в мессенджер. */}
+      {demo && !inTelegram && !hasApi && <ConnectCard />}
+
+      {demo && (hasApi || inTelegram) && (
         <div className="px-4 mt-3">
           <Glass flat className="p-3.5 flex items-center gap-3">
             <FlaskConical size={20} style={{ color: "var(--tint)" }} />
