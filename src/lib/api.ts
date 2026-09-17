@@ -248,11 +248,17 @@ export const topUp = (amount: number) => post<ApiMe>("/api/billing/topup", { amo
  *  требует свежую подпись, иначе утёкшая ссылка продлевала бы себя вечно. */
 export const newSession = () => post<{ token: string; ttlDays: number }>("/api/session", {});
 
-/** Ссылка на это же приложение, открываемая вне Telegram. Адрес API тащим с
- *  собой: в браузере параметра `?api=` от бота уже никто не подставит. */
-export function webLink(token: string): string {
+/**
+ * Ссылка на это же приложение для браузера. Несёт ТОЛЬКО адрес бота.
+ *
+ * Ключ доступа в ссылку больше не кладётся: ссылка живёт в истории браузера,
+ * в закладке, в ярлыке и на скриншотах, а вход человек и так подтвердит сам —
+ * номером и кодом из Telegram. Подсмотренная ссылка после этого не даёт
+ * ничего, кроме адреса.
+ */
+export function webLink(): string {
   const u = new URL(location.href);
-  u.searchParams.set("t", token);
+  u.searchParams.delete("t");
   if (API_BASE) u.searchParams.set("api", API_BASE);
   u.hash = "";
   return u.toString();
@@ -262,6 +268,31 @@ export function webLink(token: string): string {
  *  получаем: бот торгует ключами из своего .env, а нам нужен только факт
  *  привязки и хвост ключа для показа. */
 export const linkKeys = () => post<ApiMe>("/api/keys/link", {});
+
+/* ── Вход в веб-версию по номеру и коду ─────────────────────────────────────
+   Так же, как вход куда угодно ещё: номер → код в Telegram → готово. Ключ
+   доступа при этом НЕ ездит в ссылке: ярлык несёт только адрес бота, а право
+   на счёт человек подтверждает сам, уже в приложении. Подсмотренная ссылка
+   больше ничего не даёт. */
+
+export const authRequest = (phone: string) =>
+  post<{ sent: boolean }>("/api/auth/request", { phone });
+
+export const authConfirm = (phone: string, code: string) =>
+  post<{ token: string; ttlDays: number }>("/api/auth/confirm", { phone, code });
+
+/** Сохранить выданный билет. Дальше нужна перезагрузка: адрес и билет
+ *  читаются один раз при старте. */
+export function saveSession(token: string) {
+  try { localStorage.setItem(SESSION_KEY, token); } catch { /* приватное окно */ }
+}
+
+/** Задать адрес бота вручную — на случай, когда ярлык открыт без него. */
+export function saveApi(url: string) {
+  const clean = url.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//.test(clean)) throw new Error("адрес должен начинаться с https://");
+  localStorage.setItem(API_KEY, clean);
+}
 
 /* ── Код подключения ─────────────────────────────────────────────────────────
    Ссылка с параметрами переживает ровно один переход: встроенный браузер

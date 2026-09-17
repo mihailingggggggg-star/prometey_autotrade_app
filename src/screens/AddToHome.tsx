@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Share, Smartphone, SquarePlus, TriangleAlert } from "lucide-react";
+import { Check, Copy, ExternalLink, Fingerprint, Share, Smartphone, SquarePlus, TriangleAlert } from "lucide-react";
 import { Glass, Press, Sheet } from "../ui/kit";
-import { hasApi, hasSession, newSession, webLink } from "../lib/api";
+import { hasApi, hasSession, webLink } from "../lib/api";
 import { useApp } from "../lib/store";
 import { canInstall, install, personalizeManifest, standalone } from "../lib/pwa";
 import { haptic, inTelegram, isIOS, openExternal } from "../lib/tg";
@@ -90,7 +90,9 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
         throw new Error("бот не передал адрес своего API — откройте мини-апп "
                         + "кнопкой из панели бота, а не по прямой ссылке");
       }
-      const url = demo ? location.href : webLink((await newSession()).token);
+      // В ссылке ТОЛЬКО адрес бота. Ключ доступа человек получит уже в
+      // браузере — номером и кодом из Telegram, как при обычном входе.
+      const url = webLink();
       setLink(url);
       openExternal(url);
       haptic.ok();
@@ -139,16 +141,16 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
                 text={ios
                   ? "Выберите «На экран «Домой»» и подтвердите «Добавить»."
                   : "Выберите «Установить приложение» или «Добавить на главный экран»."} />
-          <Step n={inBrowser ? 3 : 4} last icon={<Check size={15} />}
+          <Step n={inBrowser ? 3 : 4} icon={<Check size={15} />}
                 text="Значок появится рядом с обычными приложениями и откроется на весь экран — без Telegram." />
+          <Step n={inBrowser ? 4 : 5} last icon={<Fingerprint size={15} />}
+                text="При первом запуске войдите: номер и код из Telegram. Дальше можно включить Face ID." />
         </Glass>
 
-        {/* Честно про то, чего человек иначе не ждёт: снаружи Telegram доступ
-            к счёту держится на ключе внутри ссылки. */}
         <p className="text-[12px] leading-snug px-1" style={{ color: "var(--label-2)" }}>
-          Ссылка содержит ваш личный ключ доступа — не передавайте её и не
-          публикуйте. Открыв мини-апп в Telegram заново, вы сделаете старую
-          ссылку недействительной.
+          При первом открытии приложение попросит войти: номер телефона и код,
+          который бот пришлёт в Telegram. Ссылка ключа доступа не содержит —
+          её можно спокойно оставить в закладках.
         </p>
 
         {fail && (

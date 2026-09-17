@@ -10,6 +10,9 @@ import { Trades } from "./screens/Trades";
 import { Cabinet } from "./screens/Cabinet";
 import { DebtGate } from "./screens/DebtGate";
 import { Lock, useLock } from "./screens/Lock";
+import { WebLogin } from "./screens/WebLogin";
+import { hasSession } from "./lib/api";
+import { inTelegram } from "./lib/tg";
 import { Modal, Press } from "./ui/kit";
 import { TriangleAlert } from "lucide-react";
 
@@ -37,9 +40,14 @@ export function App() {
           показывать что-либо до подтверждения незачем. */}
       {lock.locked && <Lock busy={lock.busy} ask={lock.ask} />}
 
-      {!lock.locked && stage === "auth" && <Auth />}
+      {/* Вне Telegram и без билета показывать демонстрацию бессмысленно:
+          человек пришёл за своим счётом. Сразу вход — номер и код из
+          Telegram. Telegram нужен ровно для доставки шести цифр. */}
+      {!lock.locked && !inTelegram && !hasSession() && <WebLogin />}
 
-      {!lock.locked && stage !== "auth" && (
+      {!lock.locked && (inTelegram || hasSession()) && stage === "auth" && <Auth />}
+
+      {!lock.locked && (inTelegram || hasSession()) && stage !== "auth" && (
         <>
           <main className="relative z-10 h-full scroll"
                 style={{ paddingTop: "var(--safe-t)",
