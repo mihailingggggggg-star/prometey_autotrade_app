@@ -21,6 +21,10 @@ type TG = {
   disableVerticalSwipes?(): void;
   /** Открыть ссылку во ВСТРОЕННОМ браузере Telegram. */
   openLink?(url: string, opts?: { try_instant_view?: boolean }): void;
+  /** Запросить у человека номер телефона. Telegram показывает системное окно
+   *  и сам присылает боту ПОДТВЕРЖДЁННЫЙ контакт. Введённый в форме номер
+   *  ничего не доказывает, поэтому другого пути нет. */
+  requestContact?(cb: (ok: boolean) => void): void;
   platform?: string;
   version?: string;
 };
@@ -74,3 +78,19 @@ export function openExternal(url: string) {
 
 export const platform = () => (tg?.platform || "web").toLowerCase();
 export const isIOS = () => ["ios", "macos"].includes(platform());
+
+/** Запрос номера. true — человек согласился (контакт ушёл боту).
+ *  Метод появился в Bot API 6.9; на старых клиентах его нет, и тогда номер
+ *  подтверждают в чате с ботом командой /phone. */
+export const canRequestPhone = () => Boolean(tg?.requestContact);
+
+export function requestPhone(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!tg?.requestContact) return resolve(false);
+    try {
+      tg.requestContact((ok) => resolve(Boolean(ok)));
+    } catch {
+      resolve(false);
+    }
+  });
+}

@@ -37,12 +37,12 @@ const STEPS: Step[] = [
   { target: "risk", tab: "cabinet", title: "Главная настройка",
     text: "Риск на сделку в долларах — ровно столько вы теряете при срабатывании стопа. Если поставите больше 5% депозита, приложение предупредит." },
   { target: "balance", tab: "cabinet", title: "Последний шаг", final: true,
-    text: "Осталось подключить Bybit по API-ключу — без него бот не сможет торговать. Ключ выдаётся без права на вывод средств.",
+    text: "Осталось подключить биржу — сделаю это сам: ключи бота уже настроены, вводить ничего не нужно. Права на вывод средств у них нет.",
     cta: "Подключить биржу" },
 ];
 
 export function Onboarding({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
-  const { setStage } = useApp();
+  const { setStage, linkKeys } = useApp();
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [guide, setGuide] = useState(false);
@@ -74,8 +74,14 @@ export function Onboarding({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }
 
   const next = () => {
     haptic.tap();
-    if (i < STEPS.length - 1) setI(i + 1);
-    else { haptic.ok(); setStage("app"); }
+    if (i < STEPS.length - 1) return setI(i + 1);
+    // Последний шаг подключает биржу САМ: ключи бота уже лежат в его .env, и
+    // просить человека вводить их второй раз — значит просить лишний раз
+    // достать секрет из кабинета Bybit. Не удалось — онбординг всё равно
+    // заканчивается: подключить ключи можно в кабинете.
+    haptic.ok();
+    void linkKeys();
+    setStage("app");
   };
 
   return (

@@ -174,7 +174,10 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
         </div>
       )}
 
-      {!settings.enabled && (
+      {/* Пауза приёма — состояние ЧУЖОГО счёта для того, кто им не управляет:
+          показывать её как свою значит объяснять человеку, почему у него нет
+          сделок, причиной, к которой он не имеет отношения. */}
+      {!settings.enabled && can.control && (
         <div className="px-4 mt-3">
           <Glass flat className="p-3.5 flex items-center gap-3">
             <ShieldAlert size={20} style={{ color: "var(--orange)" }} />

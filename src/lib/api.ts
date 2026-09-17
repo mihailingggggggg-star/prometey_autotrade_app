@@ -94,6 +94,12 @@ export type ApiMe = {
   id: number; name: string; username: string;
   role: "user" | "admin"; status: string;
   email: string; phone: string;
+  /** Номер подтверждён САМИМ Telegram. Введённый в форме не считается: по
+   *  номеру выдаются права администратора. */
+  phoneOk: boolean;
+  /** С какого момента показывать историю сделок. */
+  sinceAt: number | null;
+  api: { connected: boolean; tail: string; linkedAt: number | null };
   balance: number; owed: number;
   subUntil: number | null; subPlan: string; createdAt: number;
   can: { topupFree: boolean; demo: boolean; control: boolean };
@@ -211,3 +217,8 @@ export function webLink(token: string): string {
   u.hash = "";
   return u.toString();
 }
+
+/** Привязать ключи биржи в конце онбординга. Секрета мы не передаём и не
+ *  получаем: бот торгует ключами из своего .env, а нам нужен только факт
+ *  привязки и хвост ключа для показа. */
+export const linkKeys = () => post<ApiMe>("/api/keys/link", {});

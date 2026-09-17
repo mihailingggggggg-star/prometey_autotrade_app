@@ -3,9 +3,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Check, Mail, MessageSquareLock, Phone, ShieldCheck, Zap } from "lucide-react";
 import { Glass, Press, SPRING } from "../ui/kit";
 import { useApp } from "../lib/store";
-import { haptic, tgUser } from "../lib/tg";
+import { canRequestPhone, haptic, requestPhone, tgUser } from "../lib/tg";
 
-type Step = "hello" | "contacts" | "code";
+type Step = "hello" | "phone" | "email";
 
 /** Незалогиненная зона. Пока человек здесь — ни вкладок, ни данных счёта. */
 export function Auth() {
@@ -42,7 +42,7 @@ export function Auth() {
                         d="15% с прибыльной недели, 4% — по подписке" />
               </div>
             </div>
-            <Press feel="press" className="block w-full" onClick={() => setStep("contacts")}>
+            <Press feel="press" className="block w-full" onClick={() => setStep("phone")}>
               <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white flex items-center justify-center gap-2"
                    style={{ background: "var(--tint)" }}>
                 Войти через Telegram <ArrowRight size={19} />
@@ -55,53 +55,135 @@ export function Auth() {
           </Pane>
         )}
 
-        {step === "contacts" && (
-          <Pane key="contacts">
-            <Head t="Ваши контакты"
-                  d="Нужны, чтобы присылать чеки об оплате и восстановить доступ, если смените Telegram." />
+        {step === "phone" && (
+          <Pane key="phone">
+            <PhoneStep onDone={() => setStep("email")} phone={phone} setPhone={setPhone} />
+          </Pane>
+        )}
+
+        {step === "email" && (
+          <Pane key="email">
+            <Head t="Куда присылать чеки"
+                  d="E-mail нужен для чеков об оплате и восстановления доступа. Можно пропустить." />
             <div className="space-y-3 mt-6">
-              <InputRow icon={<Phone size={17} />} value={phone} onChange={setPhone}
-                        placeholder="+7 900 000-00-00" type="tel" label="Номер телефона" />
               <InputRow icon={<Mail size={17} />} value={email} onChange={setEmail}
                         placeholder="you@example.com" type="email" label="E-mail" />
             </div>
             <div className="flex-1" />
-            <Press feel="press" className="block w-full" disabled={phone.length < 6 || !email.includes("@")}
+            <Press feel="press" className="block w-full"
                    onClick={() => {
-                     setUser({ phone, email, name: tgUser?.first_name || "Трейдер" });
-                     // Профиль уезжает боту сразу: регистрация — это и есть
-                     // первое открытие приложения, отдельного шага «создать
-                     // аккаунт» нет. Ряд там уже заведён по подписи Telegram,
-                     // мы лишь дописываем контакты.
+                     setUser({ email, name: tgUser?.first_name || "Трейдер" });
                      void saveProfile(email, phone);
-                     setStep("code");
+                     haptic.ok();
+                     setStage("onboarding");
                    }}>
               <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white"
-                   style={{ background: "var(--tint)" }}>Получить код</div>
+                   style={{ background: "var(--tint)" }}>
+                {email.includes("@") ? "Продолжить" : "Пропустить"}
+              </div>
             </Press>
           </Pane>
         )}
 
-        {step === "code" && (
-          <Pane key="code">
-            <Head t="Код из бота"
-                  d="Мы отправили шесть цифр в чат с ботом @prometheus_bot. Код действует 10 минут." />
-            <div className="mt-7"><CodeInput onDone={() => { haptic.ok(); setStage("onboarding"); }} /></div>
-            <Press className="mt-5 mx-auto" onClick={() => haptic.tap()}>
-              <span className="text-[15px]" style={{ color: "var(--tint)" }}>Отправить код заново</span>
-            </Press>
-            <div className="flex-1" />
-            <Glass flat className="p-3.5 flex items-start gap-2.5">
-              <MessageSquareLock size={18} style={{ color: "var(--label-2)" }} className="shrink-0 mt-0.5" />
-              <div className="text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
-                Не приходит код? Откройте бота и нажмите «Старт» — Telegram не доставляет
-                сообщения, пока чат не начат.
-              </div>
-            </Glass>
-          </Pane>
-        )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * Подтверждение номера — настоящее, руками его не ввести.
+ *
+ * Telegram показывает системное окно и сам присылает боту контакт; бот
+ * сверяет, что это СВОЙ контакт отправителя (переслать чужую карточку можно
+ * из любой записной книжки), записывает номер и по нему же решает, открывать
+ * ли админ-функции. Поэтому поля ввода здесь нет вовсе: набранный номер
+ * ничего не доказывает, а права выдаются именно по нему.
+ */
+function PhoneStep({ onDone, phone, setPhone }: {
+  onDone: () => void; phone: string; setPhone: (v: string) => void;
+}) {
+  const { me, demo, refresh } = useApp();
+  const [waiting, setWaiting] = useState(false);
+  const ok = demo ? phone.length > 5 : Boolean(me?.phoneOk);
+
+  // Контакт уходит боту ОТДЕЛЬНЫМ сообщением, и когда он дойдёт — неизвестно.
+  // Поэтому ждём появления отметки в профиле, а не верим ответу окна.
+  useEffect(() => {
+    if (!waiting || ok) return;
+    const t = setInterval(refresh, 2000);
+    const stop = setTimeout(() => setWaiting(false), 90000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [waiting, ok, refresh]);
+
+  useEffect(() => {
+    if (ok && waiting) { haptic.ok(); setWaiting(false); }
+  }, [ok, waiting]);
+
+  const ask = async () => {
+    if (demo) { setPhone("+996999911555"); return; }
+    setWaiting(true);
+    const sent = await requestPhone();
+    if (!sent) setWaiting(false);
+  };
+
+  return (
+    <>
+      <Head t="Подтвердите номер"
+            d="Telegram подтвердит его сам — вводить ничего не нужно. По номеру мы узнаём вас и открываем доступ." />
+
+      <div className="mt-6 space-y-2.5">
+        <Glass flat className="p-4 flex items-center gap-3">
+          <span className="flex items-center justify-center w-10 h-10 rounded-[12px] shrink-0"
+                style={{ background: ok ? "color-mix(in srgb, var(--green) 20%, transparent)" : "var(--label-3)" }}>
+            {ok ? <Check size={19} style={{ color: "var(--green)" }} />
+                : <Phone size={18} style={{ color: "var(--label-2)" }} />}
+          </span>
+          <div className="min-w-0">
+            <div className="text-[15px] font-medium">
+              {ok ? (me?.phone || phone || "номер подтверждён") : "Номер не подтверждён"}
+            </div>
+            <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
+              {ok ? "подтверждён через Telegram"
+                  : waiting ? "ждём подтверждения…" : "нажмите кнопку ниже"}
+            </div>
+          </div>
+        </Glass>
+
+        {!canRequestPhone() && !demo && !ok && (
+          /* Старый клиент Telegram: системного окна нет, но подтвердить номер
+             всё равно можно — в чате с ботом. Тупика быть не должно. */
+          <Glass flat className="p-3.5 flex items-start gap-2.5">
+            <MessageSquareLock size={18} style={{ color: "var(--label-2)" }} className="shrink-0 mt-0.5" />
+            <div className="text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
+              Ваша версия Telegram не умеет показывать окно запроса. Откройте чат
+              с ботом, отправьте <b style={{ color: "var(--label)" }}>/phone</b> и
+              нажмите «Поделиться номером» — затем вернитесь сюда.
+            </div>
+          </Glass>
+        )}
+      </div>
+
+      <div className="flex-1" />
+
+      {!ok ? (
+        <Press feel="press" className="block w-full" disabled={waiting} onClick={ask}>
+          <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white"
+               style={{ background: waiting ? "var(--label-3)" : "var(--tint)" }}>
+            {waiting ? "Ждём подтверждения…" : "Подтвердить номер"}
+          </div>
+        </Press>
+      ) : (
+        <Press feel="press" className="block w-full" onClick={onDone}>
+          <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white flex items-center justify-center gap-2"
+               style={{ background: "var(--tint)" }}>
+            Дальше <ArrowRight size={19} />
+          </div>
+        </Press>
+      )}
+      <p className="text-[12px] text-center mt-3 leading-snug" style={{ color: "var(--label-3)" }}>
+        Номер виден только нам и не публикуется. Он не используется для рассылок.
+      </p>
+    </>
   );
 }
 
@@ -153,32 +235,3 @@ function InputRow({ icon, value, onChange, placeholder, type, label }: {
   );
 }
 
-function CodeInput({ onDone }: { onDone: () => void }) {
-  const [v, setV] = useState("");
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
-  useEffect(() => { if (v.length === 6) setTimeout(onDone, 260); }, [v]);
-  return (
-    <div className="relative" onClick={() => ref.current?.focus()}>
-      <input ref={ref} value={v} inputMode="numeric" maxLength={6}
-             onChange={(e) => { const n = e.target.value.replace(/\D/g, "").slice(0, 6);
-                                if (n.length > v.length) haptic.select(); setV(n); }}
-             className="absolute opacity-0 inset-0 w-full" />
-      <div className="flex gap-2 justify-between">
-        {Array.from({ length: 6 }).map((_, i) => {
-          const filled = i < v.length, active = i === v.length;
-          return (
-            <motion.div key={i} animate={{ scale: filled ? 1 : active ? 1.03 : 1 }} transition={SPRING}
-              className="glass glass-flat flex-1 aspect-[3/4] flex items-center justify-center text-[26px] font-bold"
-              style={{ outline: active ? "2px solid var(--tint)" : "none", outlineOffset: -2 }}>
-              {v[i] || ""}
-            </motion.div>
-          );
-        })}
-      </div>
-      <div className="text-center text-[13px] mt-3" style={{ color: "var(--label-3)" }}>
-        для демонстрации подойдёт любой код
-      </div>
-    </div>
-  );
-}

@@ -13,15 +13,17 @@ import { Modal, Press } from "./ui/kit";
 import { TriangleAlert } from "lucide-react";
 
 export function App() {
-  const { stage, setStage, positions, blocked, link, error, clearError } = useApp();
+  const { stage, setStage, positions, blocked, link, me, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>("home");
 
-  /* Бот ответил «вы это вы» — значит авторизация уже состоялась, подписью
-     Telegram. Показывать после этого экран регистрации с вводом кода было бы
-     имитацией: код никуда не уходит и ничего не проверяет. */
+  /* Регистрация считается пройденной, когда ПОДТВЕРЖДЁН НОМЕР — а не когда
+     бот узнал нас по подписи. Подпись говорит лишь «это тот же Telegram-
+     аккаунт»; номер — то, по чему человека узнают и по чему выдаются права.
+     Пропусти мы регистрацию по одной подписи, новый человек попадал бы сразу
+     в кабинет, минуя единственный её шаг. */
   useEffect(() => {
-    if (link === "ok" && stage === "auth") setStage("app");
-  }, [link, stage, setStage]);
+    if (link === "ok" && me?.phoneOk && stage === "auth") setStage("app");
+  }, [link, me?.phoneOk, stage, setStage]);
 
   return (
     /* h-full, а не min-h-full: прокручивается main, страница стоит на месте —

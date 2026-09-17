@@ -68,6 +68,8 @@ type Ctx = {
               scheme: { legs: { r: number; pct: number }[]; be_r: number | null } | null) => void;
   saveProfile: (email: string, phone: string) => Promise<boolean>;
   busy: string;             // какое действие сейчас выполняется
+  refresh: () => void;      // перечитать состояние с сервера
+  linkKeys: () => Promise<boolean>;
   error: string;            // последняя ошибка действия
   clearError: () => void;
 
@@ -241,7 +243,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!p) return;
       setSub({ active: true, plan: p.label, until: Date.now() + p.months * 30 * 864e5 });
     },
-    api,
+    // Ключи: их состояние знает сервер. Локальная заглушка остаётся для демо.
+    api: server.me
+      ? { connected: server.me.api.connected,
+          key: server.me.api.tail ? `••••••••••••${server.me.api.tail}` : "",
+          secret: "••••••••••••••••" }
+      : api,
     connectApi: (key, secret) =>
       setApi({ connected: true, key: key.slice(0, 4) + "••••••••••••" + key.slice(-4), secret: "••••••••••••••••" }),
     disconnectApi: () => setApi({ connected: false, key: "", secret: "" }),
@@ -269,6 +276,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Демо-режим: показываем всё, иначе прототип нечем смотреть.
       : { control: demo, topupFree: demo, demo: demo },
     act, busy, error, clearError: () => setError(""),
+    refresh: () => server.reload(),
+    linkKeys: () => demo ? Promise.resolve(true) : act("keys", () => API.linkKeys()),
     setMode: (m) => { if (!demo) void act("mode", () => API.putMode(m)); },
     setScheme: (side, scheme) => { if (!demo) void act("scheme", () => API.putScheme(side, scheme)); },
     saveProfile: async (email, phone) => {
