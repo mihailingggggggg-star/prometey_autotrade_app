@@ -11,6 +11,7 @@ import { Cabinet } from "./screens/Cabinet";
 import { DebtGate } from "./screens/DebtGate";
 import { Lock, useLock } from "./screens/Lock";
 import { WebLogin } from "./screens/WebLogin";
+import { BioOffer } from "./screens/BioOffer";
 import { hasSession } from "./lib/api";
 import { inTelegram } from "./lib/tg";
 import { Modal, Press } from "./ui/kit";
@@ -68,6 +69,9 @@ export function App() {
           <TabBar tab={tab} onTab={setTab} badge={{ market: positions.length }} />
           {stage === "onboarding" && <Onboarding tab={tab} onTab={setTab} />}
           <DebtGate open={blocked && stage === "app"} />
+          {/* Замок предлагаем сразу после входа: в глубине кабинета его не
+              найдут, а «больше не вводить код» понятно именно сейчас. */}
+          <BioOffer />
           {/* Отказ сервера показываем ТЕКСТОМ, как он пришёл. «Не получилось»
               без причины заставляет гадать, а причина у бота всегда конкретная:
               значение вне диапазона, нет боевых ключей, биржа отбила ордер. */}

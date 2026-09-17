@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, KeyRound, MessageSquareLock, Phone, RefreshCw,
-         Server } from "lucide-react";
+         Send, Server } from "lucide-react";
 import { Glass, Press } from "../ui/kit";
-import { API_BASE, authConfirm, authRequest, hasApi, parseCode, applyCode,
+import { API_BASE, authConfirm, authRequest, getHealth, hasApi, parseCode, applyCode,
          saveApi, saveSession } from "../lib/api";
 import { refreshApi } from "../lib/boot";
+import { wantBioAsk } from "../lib/lock";
 import { haptic } from "../lib/tg";
 
 /**
@@ -35,6 +36,14 @@ export function WebLogin() {
   /* Адрес бота либо неизвестен, либо по нему не отвечают: и то и другое лечится
      одной и той же карточкой, поэтому состояние одно. */
   const [addr, setAddr] = useState(!hasApi);
+  /* Имя бота спрашиваем у самого бота: без него некуда отправить
+     регистрироваться, а регистрация — это как раз те, кто войти не может. */
+  const [bot, setBot] = useState("");
+
+  useEffect(() => {
+    if (!hasApi) return;
+    void getHealth().then((h) => setBot(h.bot || "")).catch(() => setBot(""));
+  }, []);
 
   useEffect(() => {
     if (!left) return;
@@ -69,6 +78,9 @@ export function WebLogin() {
     try {
       const { token } = await authConfirm(phone, value);
       saveSession(token);
+      // Замок предложим сразу после входа: ценность «больше не вводить код»
+      // понятна именно сейчас, а в глубине кабинета его не найдут.
+      wantBioAsk();
       haptic.ok();
       // Перезагрузка обязательна: адрес и билет читаются один раз при старте.
       location.reload();
@@ -114,6 +126,7 @@ export function WebLogin() {
             </div>
           </Press>
           {addr && <Addr />}
+          <Reg bot={bot} />
           <div className="flex-1" />
           <CodeFallback />
         </>
@@ -142,15 +155,42 @@ export function WebLogin() {
             <MessageSquareLock size={18} style={{ color: "var(--label-2)" }} className="shrink-0 mt-0.5" />
             <div className="text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
               Код не приходит? Откройте чат с ботом и нажмите «Старт» — Telegram не
-              доставляет сообщения, пока чат не начат.
+              доставляет сообщения, пока чат не начат. Если этим номером вы ещё
+              не регистрировались, кода не будет: сначала регистрация.
             </div>
           </Glass>
+          <Reg bot={bot} />
           <Press className="mt-3 mx-auto" onClick={() => { setStep("phone"); setCode(""); setErr(""); }}>
             <span className="text-[13px]" style={{ color: "var(--label-3)" }}>Изменить номер</span>
           </Press>
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Регистрация — через Telegram, и только через него.
+ *
+ * Номер подтверждает сам Telegram: набранный в форме ничего не доказывает, а
+ * по номеру выдаются права. Поэтому здесь не форма, а дорога в чат с ботом,
+ * где Telegram покажет системную кнопку «Поделиться номером».
+ *
+ * Показывается ВСЕГДА, а не «когда номер не найден»: ручка входа отвечает
+ * одинаково на известный и неизвестный номер — иначе она стала бы справочником
+ * «кто у нас зарегистрирован». Значит подсказать путь можно только всем сразу.
+ */
+function Reg({ bot }: { bot: string }) {
+  if (!bot) return null;
+  return (
+    <Press className="block w-full mt-3"
+           onClick={() => window.open(`https://t.me/${bot}?start=reg`, "_blank", "noopener")}>
+      <div className="py-3 rounded-[16px] text-center text-[14px] font-medium
+                      flex items-center justify-center gap-2"
+           style={{ background: "var(--label-3)", color: "var(--label)" }}>
+        <Send size={15} /> Ещё нет счёта — регистрация в Telegram
+      </div>
+    </Press>
   );
 }
 

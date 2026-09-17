@@ -66,6 +66,28 @@ export async function enableBio(userId: number, name: string): Promise<string> {
   }
 }
 
+/* ── Предложить замок сразу после входа ──────────────────────────────────────
+   Биометрия, живущая только в глубине кабинета, не включается никогда: про
+   неё надо знать заранее. Предлагаем ровно один раз — в тот момент, когда
+   человек только что ввёл код и ценность «больше не вводить» очевидна.
+   Отметка ставится ДО перезагрузки страницы, поэтому и живёт в localStorage. */
+
+const ASK = "prometey.bio.ask";
+
+export function wantBioAsk() {
+  try { localStorage.setItem(ASK, "1"); } catch { /* приватное окно */ }
+}
+
+export function bioAsk(): boolean {
+  try { return localStorage.getItem(ASK) === "1"; } catch { return false; }
+}
+
+/** Спросили — и больше не спрашиваем: навязчивое окно при каждом запуске
+ *  раздражает сильнее, чем помогает. Включить можно в кабинете. */
+export function clearBioAsk() {
+  try { localStorage.removeItem(ASK); } catch { /* приватное окно */ }
+}
+
 export function disableBio() {
   try { localStorage.removeItem(KEY); } catch { /* приватное окно */ }
 }
