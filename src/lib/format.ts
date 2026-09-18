@@ -23,8 +23,13 @@ export const ago = (ts: number) => {
   return `${Math.round(h / 24)} д назад`;
 };
 
+/** Дата и время сделки — в поясе отчётности (Бишкек), а не в часах устройства.
+ *  Иначе строка списка спорила бы с днём, в который эта же сделка попала в
+ *  аналитику: там сутки считаются по Бишкеку (см. lib/stats). */
 export const dt = (ts: number) =>
-  new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit",
+                                         hour: "2-digit", minute: "2-digit",
+                                         timeZone: "Asia/Bishkek" });
 
 export const plural = (n: number, a: string, b: string, c: string) => {
   const x = Math.abs(n) % 100, y = x % 10;

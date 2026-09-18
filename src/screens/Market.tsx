@@ -23,7 +23,7 @@ export function Market() {
     <div className="pb-2">
       <Title sub={feed === "live" ? "Цены Bybit · в реальном времени"
                 : feed === "connecting" ? "подключаемся к бирже…"
-                : "нет связи с биржей — цены могли устареть"}>Рынок</Title>
+                : "нет связи с биржей — цены могли устареть"}>Позиции</Title>
 
       {!positions.length && (
         <div className="px-4">

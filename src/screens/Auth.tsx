@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Check, Mail, MessageSquareLock, Phone, ShieldCheck, Zap } from "lucide-react";
 import { Glass, Press, SPRING } from "../ui/kit";
+import { LogoMark, LogoWord } from "../ui/Logo";
 import { useApp } from "../lib/store";
 import { canRequestPhone, haptic, requestPhone, tgUser } from "../lib/tg";
 
@@ -26,11 +27,17 @@ export function Auth() {
                           className="w-[72px] h-[72px] rounded-[20px] flex items-center justify-center mb-6"
                           style={{ background: "var(--tint-grad)",
                                    boxShadow: "0 12px 32px -10px var(--tint)" }}>
-                <Zap size={36} color="#fff" strokeWidth={2.4} />
+                {/* Знак логотипа, а не служебная иконка: это первый экран, и
+                    именно здесь приложение представляется. Белым, потому что
+                    плитка уже акцентная — градиент на градиенте не читается. */}
+                <LogoMark size={40} grad={false} style={{ color: "#fff" }} />
               </motion.div>
               <h1 className="text-[40px] font-bold leading-[1.05] tracking-[-0.035em]">
-                Автотрейд<br />PROMETHEUS
+                Автотрейд
               </h1>
+              {/* Название — настоящей надписью логотипа, а не набранным словом:
+                  шрифт у неё свой, и набор его не повторяет. */}
+              <LogoWord height={34} className="mt-2" style={{ color: "var(--label)" }} />
               <p className="text-[17px] mt-3 leading-snug" style={{ color: "var(--label-2)" }}>
                 Скринер находит сетап — бот исполняет его на вашем счёте Bybit.
                 Без ручных входов и пропущенных движений.

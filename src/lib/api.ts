@@ -360,3 +360,16 @@ export function forgetConnection() {
     localStorage.removeItem(SESSION_KEY);
   } catch { /* приватное окно */ }
 }
+
+/* ── Уведомления ────────────────────────────────────────────────────────────
+   Ключ отдаётся БЕЗ авторизации: это публичная половина пары VAPID, она и
+   существует для того, чтобы её знал браузер. Сама подписка — уже под
+   билетом: она привязывается к счёту, и чужое устройство подписывать на наши
+   закрытия сделок нельзя. */
+export const pushKey = () =>
+  fetch(API_BASE + "/api/push/key", { signal: AbortSignal.timeout(8000) })
+    .then((r) => r.json() as Promise<{ key?: string }>)
+    .then((j) => j.key || "");
+
+export const pushSubscribe = (sub: unknown, kinds: Record<string, boolean>) =>
+  post<{ ok: boolean }>("/api/push/subscribe", { sub, kinds });

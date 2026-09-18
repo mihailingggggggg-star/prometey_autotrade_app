@@ -7,6 +7,7 @@ import { API_BASE, authConfirm, authRequest, getHealth, hasApi, parseCode, apply
 import { refreshApi } from "../lib/boot";
 import { wantBioAsk } from "../lib/lock";
 import { haptic } from "../lib/tg";
+import { LogoMark } from "../ui/Logo";
 
 /**
  * Вход в веб-версию: номер телефона → код из Telegram.
@@ -99,7 +100,7 @@ export function WebLogin() {
            style={{ background: "var(--tint-grad)",
                     boxShadow: "0 12px 32px -10px var(--tint)" }}>
         {step === "code" ? <KeyRound size={30} color="#fff" strokeWidth={2.2} />
-          : <Phone size={28} color="#fff" strokeWidth={2.2} />}
+          : <LogoMark size={32} grad={false} style={{ color: "#fff" }} />}
       </div>
 
       {step === "phone" && (

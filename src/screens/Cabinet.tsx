@@ -8,9 +8,11 @@ import {
 import { Aurora, Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone }
   from "../ui/kit";
 import { Slider } from "../ui/liquid";
+import { LogoWord } from "../ui/Logo";
 import { useApp } from "../lib/store";
 import { AddToHomeRow } from "./AddToHome";
 import { DiagRow } from "./Diag";
+import { NotifyRow } from "./Notifications";
 import * as M from "../lib/mock";
 import { dt, plural } from "../lib/format";
 import { haptic } from "../lib/tg";
@@ -226,6 +228,7 @@ export function Cabinet() {
       <GroupLabel>Приложение</GroupLabel>
       <div className="px-4 space-y-2.5">
         <AddToHomeRow />
+        <NotifyRow />
         <DiagRow />
       </div>
 
@@ -242,8 +245,12 @@ export function Cabinet() {
         </Glass>
       </div>
 
-      <div className="px-4 mt-5 text-center text-[12px]" style={{ color: "var(--label-3)" }}>
-        PROMETHEUS · автотрейд · v1.0
+      {/* Подпись внизу — настоящей надписью логотипа. Приглушённой: это
+          подпись, а не заголовок. */}
+      <div className="px-4 mt-6 flex flex-col items-center gap-1.5"
+           style={{ color: "var(--label-3)" }}>
+        <LogoWord height={15} />
+        <span className="text-[11px]">автотрейд · v1.0</span>
       </div>
 
       {/* ── Шторки ─────────────────────────────────────────────────────────── */}

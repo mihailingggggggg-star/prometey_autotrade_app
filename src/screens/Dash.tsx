@@ -16,7 +16,7 @@ import { Activity, BarChart3, Clock, Coins, Flame, Layers, Percent, PieChart,
          Scale, Target, Timer, TrendingUp } from "lucide-react";
 import { Glass, Press, Sheet, tone } from "../ui/kit";
 import { BarPlot, LinePlot } from "../ui/Plot";
-import { byDay, byHour, byReason, bySide, bySymbol, equity, rHist, summary } from "../lib/stats";
+import { byDay, byHour, byReason, bySide, bySymbol, dayLabel, equity, rHist, summary } from "../lib/stats";
 import type { Trade } from "../lib/mock";
 import { money, plural, rr } from "../lib/format";
 import { haptic } from "../lib/tg";
@@ -44,9 +44,6 @@ export function Dash({ trades }: { trades: Trade[] }) {
   const eq = useMemo(() => equity(trades), [trades]);
 
   const cards = useMemo<Card[]>(() => {
-    const dayLabel = (ts: number) =>
-      new Date(ts).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-
     const list: Card[] = [
       {
         id: "eq", wide: true, title: "Кумулятивная прибыль", icon: <TrendingUp size={15} />,

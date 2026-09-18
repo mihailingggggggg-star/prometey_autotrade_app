@@ -12,8 +12,8 @@ export const TABS_ORDER: Tab[] = ["home", "market", "trades", "cabinet"];
 
 const TABS: { id: Tab; label: string; Icon: typeof LayoutGrid }[] = [
   { id: "home", label: "Главная", Icon: LayoutGrid },
-  { id: "market", label: "Рынок", Icon: CandlestickChart },
-  { id: "trades", label: "Сделки", Icon: ListChecks },
+  { id: "market", label: "Позиции", Icon: CandlestickChart },
+  { id: "trades", label: "Аналитика", Icon: ListChecks },
   { id: "cabinet", label: "Кабинет", Icon: UserRound },
 ];
 
@@ -85,6 +85,13 @@ export function TabBar({ tab, onTab, badge }: {
      от него зависит подписка на кадры, то есть монтирование эффекта. */
   const [lifted, setLifted] = useState(false);
   const { sx, sy } = useLensSquash(x, lifted);
+  /* Подъём буквальный: в полёте линза ВЫРАСТАЕТ и выходит за края панели —
+     стекло поднято над поверхностью, значит и выглядит крупнее. Для этого
+     она вынесена из панели наружу (см. разметку): панель обрезает всё по
+     своему скруглению, и изнутри линзе за край не выйти. */
+  const lift = useMotionValue(1);
+  const lensSx = useTransform([sx, lift], ([a, b]: number[]) => a * b);
+  const lensSy = useTransform([sy, lift], ([a, b]: number[]) => a * b);
 
   useEffect(() => {
     const fit = () => {
@@ -98,12 +105,16 @@ export function TabBar({ tab, onTab, badge }: {
     return () => ro.disconnect();
   }, []);
 
-  /* Линза — КАПСУЛА по размеру ячейки, а не круг во всю высоту панели. В
-     покое она видна постоянно, и круг высотой с панель накрывал бы вкладку
-     целиком вместе с подписью: получилась бы кнопка, а не отметка места.
-     Потолок в 104px — чтобы на широком экране пилюля не расползлась в плашку. */
-  const lw = cell ? Math.min(Math.max(cell - 18, 44), 104) : 0;
-  const lh = Math.max(h - 12, 30);
+  /* Линза — КАПСУЛА по размеру ячейки, а не круг во всю высоту панели: круг
+     высотой с панель накрывал бы вкладку целиком вместе с подписью, и вышла
+     бы кнопка, а не отметка места. Полей оставлено по 3px с каждой стороны —
+     столько, чтобы пилюля читалась как отдельный предмет, но занимала свою
+     ячейку целиком. Полей ровно столько, чтобы у КРАЙНИХ вкладок выросшая
+     линза не упиралась в край экрана: обрезанная экраном, она читается как
+     дефект, а не как подъём. Потолок в 116px — чтобы на широком экране она
+     не расползлась в плашку. */
+  const lw = cell ? Math.min(Math.max(cell - 12, 48), 116) : 0;
+  const lh = Math.max(h - 6, 34);
   const top = (h - lh) / 2;
   useEffect(() => { lwMv.set(lw); }, [lw]);
 
@@ -121,6 +132,7 @@ export function TabBar({ tab, onTab, badge }: {
     x.set(at(from));
     setLifted(true);
     animate(glassOp, 1, { type: "spring", duration: 0.4, bounce: 0.3 });
+    animate(lift, 1.18, { type: "spring", duration: 0.4, bounce: 0.35 });
     animate(fringeOp, [0, 0.32, 0.32, 0], { duration: 0.58, times: [0, 0.18, 0.72, 1], ease: "easeOut" });
     const flight = animate(x, at(to), { type: "spring", stiffness: 380, damping: 26, mass: 0.8 });
     // Отскок панели: мягкий и короткий — она должна «дышать», а не прыгать.
@@ -136,6 +148,7 @@ export function TabBar({ tab, onTab, badge }: {
       if (!alive) return;
       setLifted(false);
       animate(glassOp, 0, { type: "spring", duration: 0.5, bounce: 0.2 });
+      animate(lift, 1, { type: "spring", duration: 0.5, bounce: 0.25 });
     });
     return () => { alive = false; };
   }, [idx, cell, h]);
@@ -170,28 +183,56 @@ export function TabBar({ tab, onTab, badge }: {
     </div>
   );
 
+  /* Копия ряда под стеклом — одна и та же разметка для самого стекла и для
+     радужной кромки, поэтому вынесена сюда. */
+  const magnified = (
+    <motion.div className="absolute top-0 left-0"
+                style={{ x: inv, y: -top, height: h, width: cell * TABS.length,
+                         scale: 1.14, transformOrigin: origin }}>
+      {icons(tab)}
+    </motion.div>
+  );
+
   return (
     <nav className="fixed left-0 right-0 z-40 px-1.5 pointer-events-none"
          style={{ bottom: "calc(var(--safe-b) + 8px)" }}>
-      <motion.div ref={row}
-                  className="relative mx-auto pointer-events-auto rounded-[30px] overflow-hidden chrome"
-                  /* Фон плотнее обычного стекла: под панелью проезжает контент,
-                     и он не должен читаться сквозь неё. */
-                  style={{ height: "var(--tabbar-h)", maxWidth: 560,
-                           scaleX: barSx, scaleY: barSy,
-                           background: "color-mix(in srgb, var(--bg-elev) 88%, transparent)",
-                           border: "1px solid rgba(255,255,255,.08)",
-                           boxShadow: "0 20px 44px -20px rgba(0,0,0,.95)" }}>
+      {/* Обёртка НЕ обрезает содержимое: в ней лежат и панель, и линза.
+          Панель обрезает себя сама (у неё скругление и фон), а линза —
+          снаружи, поэтому в полёте ей есть куда вырасти. Пока она лежала
+          внутри панели, «подъём» упирался в её же край. */}
+      <div className="relative mx-auto" style={{ maxWidth: 560 }}>
+        <motion.div ref={row}
+                    className="relative rounded-[30px] overflow-hidden chrome"
+                    /* Фон плотнее обычного стекла: под панелью проезжает контент,
+                       и он не должен читаться сквозь неё. */
+                    style={{ height: "var(--tabbar-h)",
+                             scaleX: barSx, scaleY: barSy,
+                             background: "color-mix(in srgb, var(--bg-elev) 88%, transparent)",
+                             border: "1px solid rgba(255,255,255,.08)",
+                             boxShadow: "0 20px 44px -20px rgba(0,0,0,.95)" }}>
 
-        {/* Настоящий ряд: он и принимает нажатия. */}
-        <div className="absolute inset-0">{icons(tab)}</div>
+          {/* Настоящий ряд: он и принимает нажатия. */}
+          <div className="absolute inset-0">{icons(tab)}</div>
+
+          {/* Кнопки поверх всего. */}
+          <div className="relative flex h-full pointer-events-auto">
+            {TABS.map(({ id, label }) => (
+              <button key={id} onClick={() => { haptic.select(); onTab(id); }}
+                      data-coach={`tab-${id}`} aria-label={label}
+                      aria-current={tab === id ? "page" : undefined}
+                      className="flex-1" />
+            ))}
+          </div>
+        </motion.div>
 
         {/* ЛИНЗА. Один элемент на оба состояния — он и едет, и деформируется;
-            меняется только материал внутри. Масштабы sx/sy приходят из физики
-            ускорения, поэтому в полёте круг сплющивается вдоль движения и
-            вытягивается поперёк, как капля. */}
-        <motion.div className="absolute rounded-full pointer-events-none"
-                    style={{ x, width: lw, height: lh, top, scaleX: sx, scaleY: sy }}>
+            меняется только материал внутри. Масштабы приходят из физики
+            ускорения (сплющивается вдоль движения, вытягивается поперёк) и
+            из подъёма (в полёте крупнее и выходит за панель). Нажатия она не
+            перехватывает — они уходят кнопкам под ней. */}
+        <motion.div className="absolute top-0 rounded-full pointer-events-none"
+                    style={{ x, width: lw, height: lh, marginTop: top,
+                             scaleX: lensSx, scaleY: lensSy }}>
 
           {/* ПОКОЙ: полупрозрачная белая пилюля. Она под активной вкладкой
               всегда — это и есть «вы здесь» из оригинала. */}
@@ -205,39 +246,19 @@ export function TabBar({ tab, onTab, badge }: {
             {/* ВЫРЕЗ. В оригинале у линзы есть punchout-слой: настоящий ряд под
                 ней не просвечивает, иначе увеличенная копия накладывается на
                 него со смещением и вместо стекла получается двоение — на
-                снимке подпись «Главная» читалась дважды. Цвет — тот же, что у
-                панели, поэтому вырез не виден как заплатка. */}
+                снимке подпись читалась дважды. Цвет — тот же, что у панели,
+                поэтому вырез не виден как заплатка. */}
             <div className="absolute inset-0" style={{ background: "var(--bg-elev)" }} />
-            <motion.div className="absolute top-0 left-0"
-                        style={{ x: inv, y: -top, height: h,
-                                 width: cell * TABS.length,
-                                 scale: 1.14, transformOrigin: origin }}>
-              {icons(tab)}
-            </motion.div>
+            {magnified}
             {/* Радужная кромка — та же копия, но со смещёнными цветными
                 тенями. Отдельным слоем, чтобы гасить её независимо от стекла:
                 постоянная бахрома читается как дефект экрана. */}
             <motion.div className="absolute inset-0 lens-fringe" style={{ opacity: fringeOp }}>
-              <motion.div className="absolute top-0 left-0"
-                          style={{ x: inv, y: -top, height: h,
-                                   width: cell * TABS.length,
-                                   scale: 1.14, transformOrigin: origin }}>
-                {icons(tab)}
-              </motion.div>
+              {magnified}
             </motion.div>
           </motion.div>
         </motion.div>
-
-        {/* Кнопки поверх всего: линза ничего не перехватывает. */}
-        <div className="relative flex h-full">
-          {TABS.map(({ id, label }) => (
-            <button key={id} onClick={() => { haptic.select(); onTab(id); }}
-                    data-coach={`tab-${id}`} aria-label={label}
-                    aria-current={tab === id ? "page" : undefined}
-                    className="flex-1" />
-          ))}
-        </div>
-      </motion.div>
+      </div>
     </nav>
   );
 }

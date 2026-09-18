@@ -15,7 +15,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart,
-         createSeriesMarkers,
          type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { GripHorizontal } from "lucide-react";
 import { useCandles } from "../lib/useMarket";
@@ -61,6 +60,9 @@ export type Level = {
 export type Mark = {
   time: number; price: number; kind: "in" | "out";
   side: "long" | "short"; text?: string;
+  /** Цвет точки. Решает вызывающий: выход прибыльной сделки зелёный, убыточной
+   *  красный, а знает об этом только он — графику результат неизвестен. */
+  color?: string;
 };
 
 type Props = {
@@ -349,29 +351,13 @@ export function TradeChart({
     });
   }, [lens.ema50, lens.ema200, candles]);
 
-  /* ── Метки входа и выхода (закрытая сделка) ───────────────────────────── */
-  useEffect(() => {
-    const s = series.current;
-    if (!s) return;
-    const css = getComputedStyle(document.documentElement);
-    const v = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
-    const api = createSeriesMarkers(s, marks.map((m) => ({
-      time: m.time as UTCTimestamp,
-      // Треугольник смотрит ПО СДЕЛКЕ: вход в лонг — вверх, выход из лонга —
-      // вниз. Одинаковые метки на входе и выходе не отличить, а именно это и
-      // нужно прочитать с графика первым делом.
-      position: (m.kind === "in") === (m.side === "long") ? "belowBar" : "aboveBar",
-      shape: (m.kind === "in") === (m.side === "long") ? "arrowUp" : "arrowDown",
-      color: m.kind === "in" ? v("--tint", "#0a84ff")
-             : v(m.side === "long" ? "--green" : "--red", "#30d158"),
-      text: m.text || (m.kind === "in" ? "вход" : "выход"),
-      size: 1.4,
-    })));
-    /* График мог быть уже снесён (смена таймфрейма, уход с экрана) — тогда
-       любой вызов по его объектам бросает «Object is disposed». Уборка не
-       имеет права ронять экран. */
-    return () => { try { api.setMarkers([]); } catch { /* график уже снесён */ } };
-  }, [JSON.stringify(marks), candles.length > 0]);
+  /* Метки входа и выхода рисуются НАКЛАДКОЙ, а не маркерами библиотеки.
+     Причина простая: маркер библиотеки крепится к свече — «над баром» или
+     «под баром», — то есть по цене он стоит не там, где сделка. На спокойном
+     участке разница невелика, а на широкой свече вход уезжает на половину её
+     тела, и график показывает не ту цену, по которой вы вошли. Накладка
+     считает и время, и цену через те же координаты, что и всё остальное
+     поверх графика, поэтому точка стоит ровно на пересечении. */
 
   /* ── Данные панелей ───────────────────────────────────────────────────── */
   useEffect(() => {
@@ -612,7 +598,16 @@ export function TradeChart({
                   style={{ mixBlendMode: "screen" }} />
         )}
         {/* Крупные сделки: кружок-линза с объёмом. */}
-        {lens.whales && g && whales.map((w, i) => <Whale key={`${w.time}-${i}`} w={w} g={g} />)}
+        {lens.whales && g && (() => {
+          /* Подписываем не все: сумма у каждой точки — это снова сплошная
+             стена текста. Берём порог по САМОЙ ленте (шестая по величине из
+             видимых), поэтому на спокойной монете подписаны почти все, а на
+             потоке — только то, что действительно выделяется. */
+          const big = [...whales].sort((a, b) => b.usd - a.usd)[5]?.usd ?? 0;
+          return whales.map((w, i) => (
+            <Whale key={`${w.time}-${i}`} w={w} g={g} label={w.usd >= big} />
+          ));
+        })()}
 
         {/* Значок PnL прямо на линии входа: «в рынке и сколько» — первое, что
             нужно увидеть, а не то, за чем лезут в цифры. */}
@@ -634,6 +629,10 @@ export function TradeChart({
             </div>
           );
         })()}
+
+        {/* Точки входа и выхода — ровно на пересечении своей цены и своего
+            времени. */}
+        {g && marks.map((m, i) => <TradeDot key={`${m.kind}-${i}`} m={m} g={g} />)}
 
         {/* Линейка между входом и выходом закрытой сделки: расстояние в
             процентах — то, ради чего на такой график и смотрят. */}
@@ -733,28 +732,76 @@ export function TradeChart({
   );
 }
 
-/* ── Кружок крупной сделки ──────────────────────────────────────────────────
-   Размер — от объёма, но в узких границах: сделка на миллион не должна
-   закрывать собой полграфика. Стекло и подсветка — чтобы кружок читался
-   поверх свечей, не пряча их. */
-function Whale({ w, g }: { w: FlowTrade; g: any }) {
+/* ── Крупная сделка: точка ──────────────────────────────────────────────────
+   Раньше это был кружок 18–38px с суммой внутри, и на живой монете он
+   закрывал собой свечи: в ленте десятки крупных сделок в минуту, кружки
+   налезали друг на друга, и график под ними было не разобрать.
+
+   Теперь метка — ТОЧКА в 6px точно на цене и времени сделки, а сумма стоит
+   подписью РЯДОМ и только у самых крупных. Размер точки чуть растёт с
+   объёмом, но в узких границах: её работа — показать место, а не кричать.
+   Свечение вместо обводки — точка читается поверх свечи, не выедая её. */
+function Whale({ w, g, label }: { w: FlowTrade; g: any; label: boolean }) {
   const x = g.x(w.time), y = g.y(w.price);
   if (x == null || y == null || x < 0 || x > g.w) return null;
-  const d = Math.max(18, Math.min(38, 18 + Math.log10(Math.max(w.usd, 1)) * 3));
+  const d = Math.max(5, Math.min(9, 4 + Math.log10(Math.max(w.usd, 1))));
+  const col = w.buy ? "var(--green)" : "var(--red)";
   return (
-    <div className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full glass-lens
-                    flex items-center justify-center"
-         style={{ left: x, top: y, width: d, height: d,
-                  borderColor: w.buy ? "color-mix(in srgb,var(--green) 60%,transparent)"
-                                     : "color-mix(in srgb,var(--red) 60%,transparent)" }}>
-      <span className="text-[9px] font-bold leading-none"
-            style={{ color: w.buy ? "var(--green)" : "var(--red)" }}>
-        {shortUsd(w.usd)}
+    <div className="absolute pointer-events-none" style={{ left: x, top: y }}>
+      <span className="absolute rounded-full"
+            style={{ width: d, height: d, marginLeft: -d / 2, marginTop: -d / 2,
+                     background: col,
+                     boxShadow: `0 0 0 1.5px rgba(0,0,0,.55), 0 0 8px 1px color-mix(in srgb, ${col} 55%, transparent)` }} />
+      {label && (
+        /* Подпись слева от точки: справа у графика идёт шкала цены и последние
+           свечи — самое ценное место, и закрывать его суммой нельзя. */
+        <span className="absolute text-[9px] font-semibold tabular-nums whitespace-nowrap"
+              style={{ right: d, top: -7, paddingRight: 4, color: col,
+                       textShadow: "0 1px 3px rgba(0,0,0,.9)" }}>
+          {shortUsd(w.usd)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Точка входа или выхода ────────────────────────────────────────────────
+   Точка, а не стрелка. Стрелка библиотеки крепится к свече сверху или снизу и
+   по цене врёт; к тому же на закрытой сделке важны ДВА числа — где вошли и
+   где вышли, — а треугольник показывает только направление.
+
+   Кольцо вокруг точки тёмное: на зелёной свече зелёная точка выхода без него
+   сливается со свечой. */
+function TradeDot({ m, g }: { m: Mark; g: any }) {
+  const x = g.x(m.time), y = g.y(m.price);
+  if (x == null || y == null) return null;
+  if (y < g.main.top - 4 || y > g.main.bottom + 4) return null;
+  const col = m.color || (m.kind === "in" ? "var(--label)" : "var(--label-2)");
+  return (
+    <div className="absolute pointer-events-none" style={{ left: x, top: y }}>
+      <span className="absolute rounded-full"
+            style={{ width: 11, height: 11, marginLeft: -5.5, marginTop: -5.5,
+                     background: col, border: "2px solid rgba(0,0,0,.72)",
+                     boxShadow: `0 0 9px 1px color-mix(in srgb, ${col} 60%, transparent)` }} />
+      <span className="absolute text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap"
+            style={{ left: -6, top: m.kind === "in" ? 9 : -22, color: col,
+                     textShadow: "0 1px 3px rgba(0,0,0,.9)" }}>
+        {m.text || (m.kind === "in" ? "вход" : "выход")}
       </span>
     </div>
   );
 }
 
+/* ── Линейка сделки ────────────────────────────────────────────────────────
+   Расстояние между входом и выходом — это разница ЦЕН, то есть величина
+   вертикальная. Прежняя диагональ от точки к точке показывала не её: наклон
+   зависел от того, сколько сделка длилась и как растянут график, и одна и та
+   же сделка выглядела то крутой, то пологой. Читалась она вдобавок как
+   траектория цены, которой не было.
+
+   Поэтому теперь: две горизонтали по ценам входа и выхода и вертикальная
+   линейка сбоку между ними. Сбоку — справа от выхода, а если там уже нет
+   места, слева от входа; по диагонали не рисуем никогда. */
 function Ruler({ marks, g }: { marks: Mark[]; g: any }) {
   const [a, b] = marks;
   const x1 = g.x(a.time), x2 = g.x(b.time), y1 = g.y(a.price), y2 = g.y(b.price);
@@ -762,15 +809,55 @@ function Ruler({ marks, g }: { marks: Mark[]; g: any }) {
   const move = ((b.price - a.price) / a.price) * 100 * (a.side === "long" ? 1 : -1);
   const good = move >= 0;
   const col = good ? "var(--green)" : "var(--red)";
+
+  const GAP = 30;
+  const right = x2 + GAP < g.w - 44;
+  const rail = right ? Math.min(x2 + GAP, g.w - 44) : Math.max(x1 - GAP, 10);
+  const from = Math.min(x1, x2, rail), to = Math.max(x1, x2, rail);
+
+  /* Линейка ОБРЕЗАЕТСЯ панелью цены. Уровень сделки легко оказывается за
+     видимым диапазоном — стоит отлистать историю или приблизить свечи, — и
+     без обрезки линейка уходила бы на сотни пикселей вниз, через панели
+     индикаторов и за край карточки. На снимке это выглядело сплошной чертой
+     поперёк всего графика. Число при этом остаётся верным: оно посчитано по
+     ценам, а не по пикселям. */
+  const lo = g.main.top + 6, hi = g.main.bottom - 6;
+  const fit = (y: number) => Math.max(lo, Math.min(hi, y));
+  const c1 = fit(y1), c2 = fit(y2);
+  const vis = (y: number) => y >= lo && y <= hi;
+  const top = Math.min(c1, c2), bot = Math.max(c1, c2);
+
   return (
     <>
       <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden>
-        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={col} strokeWidth="1.2" strokeDasharray="3 3" />
+        {/* Горизонтали уровней входа и выхода — тонкие и пунктирные: это
+            вспомогательные линии, а не уровни заявок. Уровень за пределами
+            видимой цены не рисуем вовсе: прижатая к краю линия показывала бы
+            цену не там, где она есть. */}
+        {vis(y1) && (
+          <line x1={from} y1={y1} x2={to} y2={y1} stroke={col} strokeWidth="1"
+                strokeDasharray="3 4" opacity="0.5" />
+        )}
+        {vis(y2) && (
+          <line x1={from} y1={y2} x2={to} y2={y2} stroke={col} strokeWidth="1"
+                strokeDasharray="3 4" opacity="0.5" />
+        )}
+        {/* Сама линейка. Шляпка ставится только на том конце, который виден:
+            на обрезанном её не будет — там линейка продолжается за экран, и
+            шляпка соврала бы, что это и есть уровень. */}
+        <line x1={rail} y1={top} x2={rail} y2={bot} stroke={col} strokeWidth="1.4" />
+        {vis(y1) && (
+          <line x1={rail - 4} y1={c1} x2={rail + 4} y2={c1} stroke={col} strokeWidth="1.4" />
+        )}
+        {vis(y2) && (
+          <line x1={rail - 4} y1={c2} x2={rail + 4} y2={c2} stroke={col} strokeWidth="1.4" />
+        )}
       </svg>
-      <div className="absolute -translate-x-1/2 -translate-y-1/2 px-1.5 py-[2px] rounded-full
+      <div className="absolute -translate-y-1/2 px-1.5 py-[2px] rounded-full
                       text-[10px] font-bold tabular-nums glass-lens"
-           style={{ left: (x1 + x2) / 2, top: (y1 + y2) / 2, color: col,
-                    borderColor: `color-mix(in srgb, ${col} 55%, transparent)` }}>
+           style={{ [right ? "left" : "right"]: right ? rail + 6 : g.w - rail + 6,
+                    top: (top + bot) / 2, color: col,
+                    borderColor: `color-mix(in srgb, ${col} 55%, transparent)` } as React.CSSProperties}>
         {good ? "+" : ""}{move.toFixed(2)}%
       </div>
     </>

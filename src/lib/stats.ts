@@ -19,12 +19,57 @@ export type Day = { day: string; ts: number; n: number; wins: number; loss: numb
 
 const DAY = 864e5;
 
-/** Локальная дата сделки. По локальной, а не UTC: человек живёт в своём дне, и
- *  сделка в 2 ночи по Бишкеку не должна попадать во вчерашний отчёт. */
+/* ── Сутки отчётности ───────────────────────────────────────────────────────
+   День считается по БИШКЕКУ (UTC+6), а не по часам устройства. Причин две, и
+   обе практические.
+
+   Во-первых, тем же поясом живёт бот: его дневные отчёты и журнал уже
+   считаются в UTC+6 (`analytics.TZ`). Считай приложение по устройству — и
+   «сегодня» в приложении расходилось бы с «сегодня» в Telegram, причём тем
+   сильнее, чем дальше вы уехали. Две разные правды про один и тот же день —
+   худшее, что может показывать торговый отчёт.
+
+   Во-вторых, часы устройства — не то же самое, что место жизни: вебвью
+   Telegram на чужом ноутбуке, поездка, выключенный автопояс. Сутки
+   отчётности не должны зависеть ни от чего из этого.
+
+   Перехода на летнее время в Киргизии нет с 2005 года, поэтому смещение
+   постоянное и день ровно 24 часа — можно просто сдвигать метку времени.
+
+   Сделка принадлежит дню, в который она ЗАКРЫЛАСЬ: результат появляется в
+   момент закрытия, и до него считать нечего. Открылась вчера, закрылась
+   сегодня — сегодняшняя. */
+export const TZ_MIN = 6 * 60;
+const toTz = (ms: number) => ms + TZ_MIN * 60000;
+const fromTz = (ms: number) => ms - TZ_MIN * 60000;
+
+/** Дата сделки в поясе отчётности. */
 export function dayKey(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const d = new Date(toTz(ms));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
+
+/** Полночь того дня отчётности, которому принадлежит момент. */
+export function dayStart(ms: number): number {
+  return fromTz(Math.floor(toTz(ms) / DAY) * DAY);
+}
+
+/** Начало сегодняшнего дня отчётности. */
+export const todayStart = () => dayStart(Date.now());
+
+/** Начало окна в N ПОЛНЫХ дней, считая сегодняшний. `days = 1` — «сегодня»,
+ *  то есть с полуночи, а не «последние 24 часа»: скользящее окно показывало
+ *  бы в отчёте за сегодня половину вчерашнего дня. */
+export const windowStart = (days: number) => todayStart() - (Math.max(1, days) - 1) * DAY;
+
+/** Час суток в поясе отчётности. */
+export const tzHour = (ms: number) => new Date(toTz(ms)).getUTCHours();
+
+/** Подпись дня — тоже в поясе отчётности, иначе столбик «18 сент.» на
+ *  устройстве западнее подписывался бы вчерашним числом. */
+export const dayLabel = (ms: number) =>
+  new Date(toTz(ms)).toLocaleDateString("ru-RU",
+    { day: "numeric", month: "short", timeZone: "UTC" });
 
 /** Сделки по дням, БЕЗ пропусков: день без сделок — это тоже факт, и на графике
  *  он обязан быть провалом, а не сжатием оси. */
@@ -34,8 +79,11 @@ export function byDay(trades: Trade[], days = 0): Day[] {
   const mk = (ts: number): Day => ({ day: dayKey(ts), ts, n: 0, wins: 0, loss: 0, pnl: 0, r: 0, minutes: 0 });
 
   const sorted = [...trades].sort((a, b) => a.closedAt - b.closedAt);
-  const from = days ? Date.now() - days * DAY : sorted[0].closedAt;
-  for (let t = from; t <= Date.now() + DAY / 2; t += DAY) {
+  /* Сетка дней начинается с ПОЛУНОЧИ, а не с «сейчас минус N суток»: иначе
+     ключи дней считались бы от произвольного момента внутри дня и последний
+     столбик оказывался бы наполовину вчерашним. */
+  const from = days ? windowStart(days) : dayStart(sorted[0].closedAt);
+  for (let t = from; t <= todayStart() + DAY / 2; t += DAY) {
     const d = mk(t);
     map.set(d.day, d);
   }
@@ -138,12 +186,13 @@ export function rHist(trades: Trade[]): { label: string; n: number; good: boolea
   }));
 }
 
-/** По часам суток (локальным). Сигналы приходят неравномерно, и знать свои
- *  часы полезнее, чем ещё один средний показатель. */
+/** По часам суток — по ВРЕМЕНИ ВХОДА и в поясе отчётности. Здесь вход, а не
+ *  закрытие, намеренно: вопрос этого разреза — в какие часы приходят сигналы,
+ *  а не когда они дозревают. День сделки при этом считается по закрытию. */
 export function byHour(trades: Trade[]): { hour: number; n: number; pnl: number }[] {
   const out = Array.from({ length: 24 }, (_, hour) => ({ hour, n: 0, pnl: 0 }));
   trades.forEach((t) => {
-    const h = new Date(t.closedAt - t.heldMin * 60000).getHours();
+    const h = tzHour(t.closedAt - t.heldMin * 60000);
     out[h].n += 1;
     out[h].pnl += t.pnl;
   });
