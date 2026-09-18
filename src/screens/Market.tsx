@@ -215,7 +215,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                   там они спорили бы за одно и то же место. */}
               <div className="absolute left-1 top-1 z-20 flex flex-col gap-1.5">
                 <Press onClick={() => { haptic.tap(); setFullChart(true); }} scale={0.9}>
-                  <span className="flex items-center justify-center w-8 h-8 rounded-[10px] chrome">
+                  <span className="flex items-center justify-center w-8 h-8 rounded-[10px] lg">
                     <Maximize2 size={15} style={{ color: "var(--label-2)" }} />
                   </span>
                 </Press>

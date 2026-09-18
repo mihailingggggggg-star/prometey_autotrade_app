@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import {
   ArrowLeftRight, BadgeCheck, BookOpen, Check, ChevronRight, Copy, CreditCard, Download,
@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Aurora, Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone }
   from "../ui/kit";
+import { Slider } from "../ui/liquid";
 import { useApp } from "../lib/store";
 import { AddToHomeRow } from "./AddToHome";
 import { DiagRow } from "./Diag";
@@ -401,6 +402,11 @@ function PlansSheet({ open, onClose, onBuy }: { open: boolean; onClose: () => vo
 function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { settings: s, setSettings, deposit, riskAlert, can, busy } = useApp();
   const rec = Math.floor(deposit * 0.05);
+  /* Значение ползунка во время перетяга живёт здесь, а не в настройках: пока
+     палец не отпущен, это ещё не решение человека, и отправлять его боту
+     незачем. Приходящее с сервера значение подхватывается, когда меняется. */
+  const [risk, setRisk] = useState(s.riskUsd);
+  useEffect(() => { setRisk(s.riskUsd); }, [s.riskUsd]);
   return (
     <Sheet open={open} onClose={onClose} title="Настройки бота" tall>
       <div className="pb-3 space-y-3">
@@ -425,15 +431,22 @@ function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) 
           <div className="flex items-baseline justify-between">
             <span className="text-[15px]">Риск на сделку</span>
             <b className="text-[22px]" style={{ color: riskAlert ? "var(--orange)" : "var(--label)" }}>
-              ${s.riskUsd}
+              ${risk}
             </b>
           </div>
-          <input type="range" min={1} max={120} step={1} value={s.riskUsd}
-                 onChange={(e) => setSettings({ riskUsd: +e.target.value })}
-                 className="w-full mt-3 accent-[var(--tint)]" />
+          {/* Ползунок жидкого стекла (порт LiquidGlassSlider из iOS 26).
+              Живое значение идёт в подпись, а НА СЕРВЕР уходит только то, на
+              чём палец остановился: системный `input[type=range]` слал запрос
+              на каждый пиксель движения — под сотню записей настроек на одно
+              движение пальцем. */}
+          <div className="mt-2">
+            <Slider value={risk} min={1} max={120} step={1}
+                    onInput={setRisk}
+                    onChange={(v) => { setRisk(v); setSettings({ riskUsd: v }); }} />
+          </div>
           <div className="flex justify-between text-[11px] mt-1" style={{ color: "var(--label-2)" }}>
             <span>$1</span>
-            <span>{((s.riskUsd / deposit) * 100).toFixed(1)}% депозита</span>
+            <span>{((risk / deposit) * 100).toFixed(1)}% депозита</span>
             <span>$120</span>
           </div>
           {riskAlert && (

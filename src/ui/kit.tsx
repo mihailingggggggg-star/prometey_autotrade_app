@@ -22,7 +22,10 @@ export function Press({
       whileTap={disabled ? undefined : { scale }}
       transition={SPRING}
       onClick={() => { if (disabled) return; haptic[feel](); onClick?.(); }}
-      className={`appearance-none text-left disabled:opacity-40 ${className}`}
+      /* lg-press — режим кнопки из ybouane/liquidglass: нажатие сплющивает
+         фаску стекла внутри и углубляет тень. На кнопке без стекла класс не
+         делает ничего (правило в theme.css целится только в `.lg`). */
+      className={`appearance-none text-left disabled:opacity-40 lg-press ${className}`}
     >
       {children}
     </motion.button>
@@ -62,9 +65,12 @@ export function Segmented<T extends string>({
           className={`relative flex-1 rounded-[9px] ${size === "sm" ? "py-1 text-[13px]" : "py-1.5 text-[14px]"} font-medium`}
           style={{ color: value === o.id ? "var(--label)" : "var(--label-2)" }}>
           {value === o.id && (
+            /* Подложка — то же стекло, что у бегунков: кромка, блик сверху,
+               френель по краю (класс .lg, оптика перенесена из шейдера
+               ybouane/liquidglass). Плоская заливка рядом со стеклянными
+               переключателями читалась как элемент из другого набора. */
             <motion.span layoutId="seg" transition={SPRING}
-              className="absolute inset-0 rounded-[9px]"
-              style={{ background: "var(--bg-elev)", boxShadow: "0 1px 3px rgba(0,0,0,.14)" }} />
+              className="absolute inset-0 rounded-[9px] lg" />
           )}
           <span className="relative z-10">{o.label}</span>
         </button>
@@ -117,7 +123,7 @@ export function Sheet({
             <div className="pt-2.5 pb-1 flex justify-center shrink-0 cursor-grab"
                  style={{ touchAction: "none" }}
                  onPointerDown={(e) => grab.start(e)}>
-              <div className="w-9 h-[5px] rounded-full" style={{ background: "var(--label-3)" }} />
+              <div className="w-9 h-[5px] rounded-full lg" />
             </div>
             {title && (
               <div className="px-5 pb-2 flex items-center justify-between shrink-0"
@@ -126,8 +132,7 @@ export function Sheet({
                 <h2 className="text-[20px] font-bold tracking-[-0.02em]">{title}</h2>
                 <Press onClick={onClose} className="rounded-full p-1.5"
                        aria-label="Закрыть">
-                  <span className="flex items-center justify-center w-7 h-7 rounded-full"
-                        style={{ background: "var(--label-3)" }}>
+                  <span className="flex items-center justify-center w-7 h-7 rounded-full lg">
                     <X size={15} strokeWidth={2.6} />
                   </span>
                 </Press>
@@ -179,8 +184,8 @@ export function Row({
   const body = (
     <div className={`flex items-center gap-3 px-4 py-2.5 ${last ? "" : "hairline"}`}>
       {icon && (
-        <span className="flex items-center justify-center w-[30px] h-[30px] rounded-[8px] shrink-0"
-              style={{ background: "var(--label-3)", color: danger ? "var(--red)" : "var(--label)" }}>
+        <span className="flex items-center justify-center w-[30px] h-[30px] rounded-[8px] shrink-0 lg"
+              style={{ color: danger ? "var(--red)" : "var(--label)" }}>
           {icon}
         </span>
       )}
@@ -196,17 +201,12 @@ export function Row({
   return onClick ? <Press onClick={onClick} className="block w-full">{body}</Press> : body;
 }
 
-export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button onClick={() => { haptic.select(); onChange(!on); }}
-      className="w-[51px] h-[31px] rounded-full p-[2px] flex transition-colors"
-      style={{ background: on ? "var(--green)" : "var(--label-3)", justifyContent: on ? "flex-end" : "flex-start" }}>
-      <motion.span layout transition={SPRING}
-        className="block w-[27px] h-[27px] rounded-full bg-white"
-        style={{ boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />
-    </button>
-  );
-}
+/* Переключатель переехал в ui/liquid.tsx — это порт LiquidGlassSwitch из iOS 26:
+   бегунок раскрывается в стекло под пальцем, переключается по достижении края
+   дорожки, сопротивляется за границей. Имя оставлено прежним НАМЕРЕННО: его
+   зовут из восьми мест, и переименование ради переноса файла было бы правкой
+   восьми экранов без единого изменения по существу. */
+export { Toggle } from "./liquid";
 
 export const money = (v: number) => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
 export const tone = (v: number) => (v > 0 ? "var(--green)" : v < 0 ? "var(--red)" : "var(--label-2)");

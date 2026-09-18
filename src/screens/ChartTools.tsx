@@ -12,8 +12,9 @@
  */
 
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Check, Eye, Plus, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, Plus, Sparkles } from "lucide-react";
 import { Glass, Press, Sheet, Toggle } from "../ui/kit";
+import { Check3 } from "../ui/liquid";
 import { LENS_OFF, PANES, PANES_DEFAULT, type Lens, type PaneKind } from "../ui/TradeChart";
 import { haptic } from "../lib/tg";
 
@@ -48,7 +49,7 @@ export function LensButton({ lens, onLens }: { lens: Lens; onLens: (l: Lens) => 
   return (
     <>
       <Press onClick={() => { haptic.tap(); setOpen(true); }} scale={0.9}>
-        <span className="relative flex items-center justify-center w-8 h-8 rounded-[10px] chrome">
+        <span className="relative flex items-center justify-center w-8 h-8 rounded-[10px] lg">
           <Eye size={15} style={{ color: n ? "var(--lime)" : "var(--label-2)" }} />
           {!!n && (
             <span className="absolute -top-1 -right-1 w-[15px] h-[15px] rounded-full text-[9px]
@@ -176,11 +177,7 @@ export function PaneSheet({ open, onClose, panes, onPanes }: {
               <div key={p.id} className={`flex items-center gap-3 px-4 py-3 ${i === PANES.length - 1 ? "" : "hairline"}`}>
                 <Press onClick={() => toggle(p.id)} className="min-w-0 flex-1 text-left">
                   <span className="flex items-center gap-2">
-                    <span className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center shrink-0"
-                          style={{ background: on ? "var(--lime)" : "transparent",
-                                   border: on ? "none" : "1px solid var(--label-3)" }}>
-                      {on && <Check size={13} strokeWidth={3} color="#fff" />}
-                    </span>
+                    <Check3 on={on} size={19} />
                     <span className="min-w-0">
                       <span className="block text-[15px]">
                         {on && <b style={{ color: "var(--lime)" }}>{pos + 1}. </b>}{p.label}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { animate, motion, useMotionTemplate, useMotionValue, useTransform } from "motion/react";
 import { LayoutGrid, CandlestickChart, ListChecks, UserRound } from "lucide-react";
 import { haptic } from "../lib/tg";
+import { useLensSquash } from "../ui/liquid";
 
 export type Tab = "home" | "market" | "trades" | "cabinet";
 
@@ -17,30 +18,34 @@ const TABS: { id: Tab; label: string; Icon: typeof LayoutGrid }[] = [
 ];
 
 /**
- * Панель вкладок со СТЕКЛЯННОЙ ЛИНЗОЙ, как в Telegram на iOS.
+ * Панель вкладок — порт `_UILiquidLensView` из UITabBar iOS 26
+ * (реализация DnV1eX/LiquidGlassKit, MIT).
  *
- * Как это устроено и почему именно так.
+ * У линзы ДВА состояния, и это главное, что отличает её от «пузыря, который
+ * прилетает и улетает»:
  *
- * Пузырь не подкрашивает фон — он УВЕЛИЧИВАЕТ то, что под ним. Внутри круга
- * лежит вторая, точная копия ряда иконок, увеличенная относительно центра
- * пузыря; круг едет по панели, копия едет ему навстречу, и получается
- * настоящее стекло, за которым иконка растягивается и смещается. Никакого
- * размытия движения и никакой заливки цветом.
+ *   • ПОКОЙ — полупрозрачная белая пилюля под активной вкладкой. Она не
+ *     исчезает: место, где вы находитесь, обозначено материалом, а не только
+ *     цветом значка.
+ *   • ПОДНЯТА — на время перелёта пилюля превращается в полноценное стекло:
+ *     под ним лежит увеличенная копия ряда иконок, поэтому иконка за стеклом
+ *     по-настоящему растягивается и смещается, а по её краю идёт радуга.
  *
- * Радужная кромка — два цветных `drop-shadow` на копии, красный и голубой в
- * противоположные стороны. Это и есть хроматическая аберрация настоящей линзы;
- * живёт она только в полёте, потому что постоянная бахрома читается как
- * дефект экрана.
+ * Сжатие и растяжение линзы в полёте считаются по УСКОРЕНИЮ (`useLensSquash`,
+ * ui/liquid.tsx), а не по скорости — формула и окно усреднения из оригинала.
+ * Разница заметна сразу: по скорости пузырь растянут всю дорогу и встаёт
+ * рывком; по ускорению он растягивается на старте, отпускает середину и
+ * сжимается на торможении — то есть ведёт себя как капля, а не как резинка.
  *
- * SVG-фильтры (настоящее преломление) здесь невозможны: Safari не применяет их
- * ни к `backdrop-filter`, ни к содержимому под элементом, а телефон у нас
- * именно Safari. Поэтому линза сделана увеличением копии — Safari это умеет и
- * делает на композиторе.
+ * Настоящего преломления фона тут нет и быть не может: SVG-фильтр в
+ * `backdrop-filter` Safari не применяет, а телефон у нас именно Safari.
+ * Но под линзой лежит ИЗВЕСТНОЕ содержимое — тот самый ряд иконок, — и его
+ * копию можно увеличить честно. Поэтому искривление здесь настоящее, в
+ * отличие от остальных стеклянных поверхностей приложения.
  *
- * ПРОИЗВОДИТЕЛЬНОСТЬ. Ни одного повторного рендера React за время перелёта:
- * позиция живёт в MotionValue, встречное движение копии — производная от неё
- * (`useTransform`), центр увеличения — шаблон от неё же. Меняются только
- * transform и opacity, то есть работа композитора, а не пересборка дерева.
+ * ПРОИЗВОДИТЕЛЬНОСТЬ. Ни одного рендера React за перелёт: позиция, масштабы и
+ * прозрачности живут в MotionValue, встречное движение копии — производная от
+ * позиции. Меняются только transform и opacity, то есть работа композитора.
  */
 export function TabBar({ tab, onTab, badge }: {
   tab: Tab; onTab: (t: Tab) => void; badge?: Partial<Record<Tab, number>>;
@@ -55,7 +60,12 @@ export function TabBar({ tab, onTab, badge }: {
      дерева на каждом кадре полёта. */
   const x = useMotionValue(0);
   const inv = useTransform(x, (v) => -v);
-  const center = useTransform(x, (v) => v + h / 2);
+  /* Размеры линзы — тоже MotionValue, хотя меняются раз в жизнь (поворот,
+     смена ширины окна). Причина техническая: `useTransform` запоминает
+     функцию, и замыкание на обычное число после пересчёта ширины осталось бы
+     со старым значением — центр увеличения уехал бы от центра стекла. */
+  const lwMv = useMotionValue(0);
+  const center = useTransform([x, lwMv], ([v, w]: number[]) => v + w / 2);
   const origin = useMotionTemplate`${center}px 50%`;
   /* ВСЁ на MotionValue, а не на `animate`-контролах, и это не стилистика.
      Контролы гоняют ключевые кадры через WAAPI, то есть на компоновщике: в
@@ -64,11 +74,17 @@ export function TabBar({ tab, onTab, badge }: {
      пузыря на снимке просто нет, и отличить «не работает» от «не снялось»
      нельзя. MotionValue пишет стиль сам, каждый кадр, на главном потоке —
      ререндеров React по-прежнему ноль. */
-  const lensOp = useMotionValue(0);        // появление и угасание пузыря
-  const lensSc = useMotionValue(0.8);
+  const glassOp = useMotionValue(0);       // 0 — пилюля покоя, 1 — стекло
+  const restOp = useTransform(glassOp, (v) => 1 - v);
   const fringeOp = useMotionValue(0);      // радуга только в полёте
   const barSx = useMotionValue(1);         // отскок самой панели
   const barSy = useMotionValue(1);
+
+  /* «Поднята» — состояние оригинала: пока линза летит, она стеклянная и живёт
+     по физике, в покое это просто пилюля. Держим его в state (а не в ref):
+     от него зависит подписка на кадры, то есть монтирование эффекта. */
+  const [lifted, setLifted] = useState(false);
+  const { sx, sy } = useLensSquash(x, lifted);
 
   useEffect(() => {
     const fit = () => {
@@ -82,7 +98,16 @@ export function TabBar({ tab, onTab, badge }: {
     return () => ro.disconnect();
   }, []);
 
-  const at = (i: number) => i * cell + cell / 2 - h / 2;
+  /* Линза — КАПСУЛА по размеру ячейки, а не круг во всю высоту панели. В
+     покое она видна постоянно, и круг высотой с панель накрывал бы вкладку
+     целиком вместе с подписью: получилась бы кнопка, а не отметка места.
+     Потолок в 104px — чтобы на широком экране пилюля не расползлась в плашку. */
+  const lw = cell ? Math.min(Math.max(cell - 18, 44), 104) : 0;
+  const lh = Math.max(h - 12, 30);
+  const top = (h - lh) / 2;
+  useEffect(() => { lwMv.set(lw); }, [lw]);
+
+  const at = (i: number) => i * cell + cell / 2 - lw / 2;
 
   useEffect(() => {
     if (!cell) return;
@@ -90,18 +115,29 @@ export function TabBar({ tab, onTab, badge }: {
     prev.current = idx;
     if (from === to) { x.set(at(to)); return; }
 
-    /* Пузырь ПОЯВЛЯЕТСЯ у прежней вкладки, летит к новой и пропадает. Он не
-       живёт на экране постоянно: в покое активную вкладку показывает цвет, а
-       стекло — это про переход. */
+    /* Подъём и посадка — пружины оригинала: 0.4с при затухании 0.7 вверх и
+       0.5с при 0.8 вниз. Вверх короче и звонче, вниз дольше и мягче: линза
+       поднимается рывком, а опускается, догоняя саму себя. */
     x.set(at(from));
-    animate(lensOp, [0, 1, 1, 0], { duration: 0.58, times: [0, 0.14, 0.78, 1], ease: "easeOut" });
-    animate(lensSc, [0.78, 1.04, 1, 0.86], { duration: 0.58, times: [0, 0.14, 0.78, 1], ease: "easeOut" });
+    setLifted(true);
+    animate(glassOp, 1, { type: "spring", duration: 0.4, bounce: 0.3 });
     animate(fringeOp, [0, 0.32, 0.32, 0], { duration: 0.58, times: [0, 0.18, 0.72, 1], ease: "easeOut" });
-    // Отскок: пружина с перелётом. Мягкая и короткая — панель должна
-    // «дышать», а не прыгать.
-    animate(x, at(to), { type: "spring", stiffness: 380, damping: 26, mass: 0.8 });
+    const flight = animate(x, at(to), { type: "spring", stiffness: 380, damping: 26, mass: 0.8 });
+    // Отскок панели: мягкий и короткий — она должна «дышать», а не прыгать.
     animate(barSx, [1, 1.015, 0.997, 1], { duration: 0.44, ease: "easeOut" });
     animate(barSy, [1, 0.965, 1.008, 1], { duration: 0.44, ease: "easeOut" });
+
+    /* Посадка — по ОКОНЧАНИЮ перелёта, а не по таймеру «примерно столько же»:
+       пружина доезжает за разное время в зависимости от длины пути (соседняя
+       вкладка и вкладка через три — это не одно и то же), и линза, севшая
+       раньше прибытия, оставила бы стекло посреди панели. */
+    let alive = true;
+    void flight.then(() => {
+      if (!alive) return;
+      setLifted(false);
+      animate(glassOp, 0, { type: "spring", duration: 0.5, bounce: 0.2 });
+    });
+    return () => { alive = false; };
   }, [idx, cell, h]);
 
   const icons = (active: Tab) => (
@@ -150,23 +186,44 @@ export function TabBar({ tab, onTab, badge }: {
         {/* Настоящий ряд: он и принимает нажатия. */}
         <div className="absolute inset-0">{icons(tab)}</div>
 
-        {/* ЛИНЗА. Круг с копией ряда внутри: копия увеличена относительно центра
-            круга и едет навстречу, поэтому под стеклом иконка растягивается —
-            ровно как в референсе. */}
-        <motion.div className="absolute top-0 rounded-full overflow-hidden pointer-events-none lens-glass"
-                    style={{ x, width: h, height: h, opacity: lensOp, scale: lensSc }}>
-          <motion.div className="absolute top-0 left-0 h-full"
-                      style={{ x: inv, width: "100vw", maxWidth: 560,
-                               scale: 1.14, transformOrigin: origin }}>
-            {icons(tab)}
-          </motion.div>
-          {/* Радужная кромка — та же копия, но со смещёнными цветными тенями.
-              Отдельным слоем, чтобы гасить её независимо от самой линзы. */}
-          <motion.div className="absolute inset-0 lens-fringe" style={{ opacity: fringeOp }}>
-            <motion.div className="absolute top-0 left-0 h-full"
-                        style={{ x: inv, width: "100vw", maxWidth: 560,
+        {/* ЛИНЗА. Один элемент на оба состояния — он и едет, и деформируется;
+            меняется только материал внутри. Масштабы sx/sy приходят из физики
+            ускорения, поэтому в полёте круг сплющивается вдоль движения и
+            вытягивается поперёк, как капля. */}
+        <motion.div className="absolute rounded-full pointer-events-none"
+                    style={{ x, width: lw, height: lh, top, scaleX: sx, scaleY: sy }}>
+
+          {/* ПОКОЙ: полупрозрачная белая пилюля. Она под активной вкладкой
+              всегда — это и есть «вы здесь» из оригинала. */}
+          <motion.div className="absolute inset-0 rounded-full"
+                      style={{ opacity: restOp, background: "var(--lens-rest)",
+                               boxShadow: "inset 0 1px 0 rgba(255,255,255,.22)" }} />
+
+          {/* ПОДНЯТА: стекло с увеличенной копией ряда под ним. */}
+          <motion.div className="absolute inset-0 rounded-full overflow-hidden lens-glass"
+                      style={{ opacity: glassOp }}>
+            {/* ВЫРЕЗ. В оригинале у линзы есть punchout-слой: настоящий ряд под
+                ней не просвечивает, иначе увеличенная копия накладывается на
+                него со смещением и вместо стекла получается двоение — на
+                снимке подпись «Главная» читалась дважды. Цвет — тот же, что у
+                панели, поэтому вырез не виден как заплатка. */}
+            <div className="absolute inset-0" style={{ background: "var(--bg-elev)" }} />
+            <motion.div className="absolute top-0 left-0"
+                        style={{ x: inv, y: -top, height: h,
+                                 width: cell * TABS.length,
                                  scale: 1.14, transformOrigin: origin }}>
               {icons(tab)}
+            </motion.div>
+            {/* Радужная кромка — та же копия, но со смещёнными цветными
+                тенями. Отдельным слоем, чтобы гасить её независимо от стекла:
+                постоянная бахрома читается как дефект экрана. */}
+            <motion.div className="absolute inset-0 lens-fringe" style={{ opacity: fringeOp }}>
+              <motion.div className="absolute top-0 left-0"
+                          style={{ x: inv, y: -top, height: h,
+                                   width: cell * TABS.length,
+                                   scale: 1.14, transformOrigin: origin }}>
+                {icons(tab)}
+              </motion.div>
             </motion.div>
           </motion.div>
         </motion.div>
