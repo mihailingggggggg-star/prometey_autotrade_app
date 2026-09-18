@@ -188,7 +188,13 @@ export function TradeChart({
     const ro = full ? null : new ResizeObserver(() => c.applyOptions({ width: box.current!.clientWidth }));
     ro?.observe(box.current);
     return () => {
-      ro?.disconnect(); c.remove();
+      ro?.disconnect();
+      /* autoSize снимаем ДО удаления. С ним библиотека держит свой наблюдатель
+         за размером контейнера, и когда React убирает контейнер из дерева,
+         наблюдатель успевает сработать уже по снесённому графику — в консоль
+         летит «Object is disposed» из его же внутренностей. */
+      try { c.applyOptions({ autoSize: false }); } catch { /* уже снесён */ }
+      try { c.remove(); } catch { /* уже снесён */ }
       chart.current = null; series.current = null;
       lines.current = new Map(); emas.current = new Map(); paneSeries.current = new Map();
     };
@@ -263,13 +269,19 @@ export function TradeChart({
        последней панели — «Ликвидации» выходили втрое выше открытого интереса
        просто потому, что стояли внизу. Панель цены не трогаем вовсе: ей
        достаётся то, что осталось, и это правильный порядок — цена главная. */
-    requestAnimationFrame(() => {
+    const raf = requestAnimationFrame(() => {
+      /* График мог быть пересобран за этот кадр (смена таймфрейма, уход с
+         экрана). Обращение к снесённому бросает «Object is disposed» уже
+         ВНУТРИ библиотеки, мимо нашего try, поэтому проверяем, что перед нами
+         всё ещё тот же график. */
+      if (chart.current !== c) return;
       for (let pass = 0; pass < 2; pass++) {
         for (let i = panes.length; i >= 1; i--) {
           try { c.panes()[i]?.setHeight(PANE_H); } catch { /* панели ещё нет */ }
         }
       }
     });
+    return () => cancelAnimationFrame(raf);
   }, [panes.join(","), full, height]);
 
   /* ── Свечи ────────────────────────────────────────────────────────────── */
@@ -296,7 +308,7 @@ export function TradeChart({
   useEffect(() => {
     const s = series.current;
     if (!s) return;
-    lines.current.forEach((l) => s.removePriceLine(l));
+    try { lines.current.forEach((l) => s.removePriceLine(l)); } catch { /* снят */ }
     lines.current = new Map();
     levels.filter((l) => l.price > 0).forEach((l, i) => {
       lines.current.set(`${l.kind}:${i}`, s.createPriceLine({
@@ -320,7 +332,10 @@ export function TradeChart({
     // Снимаем то, что выключили: серия, оставшаяся на графике, продолжала бы
     // обновляться и врать про включённую линзу.
     emas.current.forEach((s, key) => {
-      if (!want.some((w) => w.key === key)) { c.removeSeries(s); emas.current.delete(key); }
+      if (!want.some((w) => w.key === key)) {
+        try { c.removeSeries(s); } catch { /* снят вместе с графиком */ }
+        emas.current.delete(key);
+      }
     });
     want.forEach(({ key, len, color }) => {
       let s = emas.current.get(key);
@@ -352,14 +367,19 @@ export function TradeChart({
       text: m.text || (m.kind === "in" ? "вход" : "выход"),
       size: 1.4,
     })));
-    return () => api.setMarkers([]);
+    /* График мог быть уже снесён (смена таймфрейма, уход с экрана) — тогда
+       любой вызов по его объектам бросает «Object is disposed». Уборка не
+       имеет права ронять экран. */
+    return () => { try { api.setMarkers([]); } catch { /* график уже снесён */ } };
   }, [JSON.stringify(marks), candles.length > 0]);
 
   /* ── Данные панелей ───────────────────────────────────────────────────── */
   useEffect(() => {
     const put = (key: string, rows: { time: number }[]) => {
       const sr = paneSeries.current.get(key);
-      if (sr && rows.length) sr.setData(rows.map((r) => ({ ...r, time: r.time as UTCTimestamp })) as any);
+      if (!sr || !rows.length) return;
+      try { sr.setData(rows.map((r) => ({ ...r, time: r.time as UTCTimestamp })) as any); }
+      catch { /* серия уже снята вместе с графиком */ }
     };
     put("longs", oi.longs);
     put("shorts", oi.shorts);
@@ -369,23 +389,25 @@ export function TradeChart({
        виден: у лонгов он уходит вниз, у шортов вверх — то есть столбик всегда
        читается как «чья сторона выросла». */
     const dl = paneSeries.current.get("flow:l"), ds = paneSeries.current.get("flow:s");
-    if (dl && ds) {
+    if (dl && ds) try {
       dl.setData(deltas(oi.longs).map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
       ds.setData(deltas(oi.shorts).map((d) => ({ time: d.time as UTCTimestamp, value: -d.value })));
-    }
+    } catch { /* серия уже снята */ }
   }, [oi.longs, oi.shorts, oi.total]);
 
   useEffect(() => {
     const s = paneSeries.current.get("cvd");
-    if (s && cvd.bars.length) s.setData(cvd.bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.value })));
+    if (s && cvd.bars.length) try {
+      s.setData(cvd.bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.value })));
+    } catch { /* серия уже снята */ }
   }, [cvd.bars]);
 
   useEffect(() => {
     const l = paneSeries.current.get("liq:l"), sh = paneSeries.current.get("liq:s");
-    if (l && sh) {
+    if (l && sh) try {
       l.setData(liq.bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.longs })));
       sh.setData(liq.bars.map((b) => ({ time: b.time as UTCTimestamp, value: -b.shorts })));
-    }
+    } catch { /* серия уже снята */ }
   }, [liq.bars]);
 
   /* ── Объём под ценой ────────────────────────────────────────────────────
@@ -402,6 +424,7 @@ export function TradeChart({
       return;
     }
     let sr = has;
+    try {
     if (!sr) {
       sr = c.addSeries(HistogramSeries, {
         color: "rgba(160,160,170,.42)", priceFormat: { type: "volume" },
@@ -413,6 +436,7 @@ export function TradeChart({
     if (vol.rows.length) {
       sr.setData(vol.rows.map((b) => ({ time: b.time as UTCTimestamp, value: b.usd })));
     }
+    } catch { /* график снесён между тактами — объём подождёт следующего */ }
   }, [lens.volume, vol.rows]);
 
   /* ── Накладка: положения значков ──────────────────────────────────────────

@@ -1,10 +1,12 @@
 import { useState } from "react";
 import QRCode from "react-qr-code";
 import {
-  BadgeCheck, BookOpen, Check, ChevronRight, Copy, CreditCard, Download, ExternalLink,
-  KeyRound, LifeBuoy, Lock, Percent, Plug, Receipt, RefreshCw, ShieldAlert, Sliders, Wallet,
+  ArrowLeftRight, BadgeCheck, BookOpen, Check, ChevronRight, Copy, CreditCard, Download,
+  ExternalLink, KeyRound, LifeBuoy, Lock, Percent, Plug, Plus, Receipt, RefreshCw, ShieldAlert,
+  Sliders, Wallet,
 } from "lucide-react";
-import { Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone } from "../ui/kit";
+import { Aurora, Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone }
+  from "../ui/kit";
 import { useApp } from "../lib/store";
 import { AddToHomeRow } from "./AddToHome";
 import { DiagRow } from "./Diag";
@@ -30,64 +32,91 @@ export function Cabinet() {
       <Title sub="Профиль и настройки">Кабинет</Title>
 
       {/* ── Профиль ──────────────────────────────────────────────────────────
-          Лицо, имя и две плитки сверху — как в референсе владельца. Плитки
-          показывают РЕАЛЬНЫЕ вещи (тариф и счёт бота), а не украшения:
-          нарисовать «Referrals», которого в автотрейде нет, значило бы
-          пообещать функцию картинкой. */}
+          Строится по референсу владельца: высокая карточка сверху, поверх её
+          нижнего края — карточка счёта, под ней список подключённого.
+
+          «Рассечённое» лицо из референса тут не нарисовать: фотографии у
+          веб-версии нет — её отдаёт только сам Telegram. Поэтому тот же приём
+          сделан светом: полосы поверх свечения. Пустой прямоугольник на этом
+          месте выглядел бы недогруженным экраном. */}
       <div className="px-4">
-        <div className="flex flex-col items-center pt-1 pb-3">
-          <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center text-[28px]
-                          font-bold"
-               style={{ background: "var(--tint-grad)", color: "#fff",
-                        boxShadow: "0 10px 26px -10px color-mix(in srgb, var(--lime) 70%, transparent)" }}>
-            {initials(a.me?.name || a.user.name || "Т")}
-          </div>
-          <div className="text-[21px] font-bold mt-2.5 tracking-[-0.02em]">
-            {a.me?.name || a.user.name || "Трейдер"}
-          </div>
-          <div className="text-[13px] mt-0.5 flex items-center gap-1.5" style={{ color: "var(--label-2)" }}>
-            {a.me?.username ? `@${a.me.username}` : a.me?.phone || "профиль не заполнен"}
-            {a.me?.role === "admin" && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold"
-                    style={{ background: "color-mix(in srgb, var(--lime) 20%, transparent)",
-                             color: "var(--lime)" }}>
-                <BadgeCheck size={11} /> владелец
-              </span>
-            )}
+        <div className="relative rounded-[26px] overflow-hidden" style={{ height: 210 }}>
+          <div className="absolute inset-0" style={{ background: "var(--tint-grad)", opacity: 0.55 }} />
+          <Aurora />
+          <div className="absolute inset-0" style={{
+                 background: "repeating-linear-gradient(90deg, rgba(0,0,0,.55) 0 2px, transparent 2px 7px)",
+                 mixBlendMode: "multiply" }} />
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="w-[84px] h-[84px] rounded-full flex items-center justify-center text-[30px]
+                            font-bold"
+                 style={{ color: "#fff", background: "rgba(10,10,12,.55)",
+                          border: "1px solid rgba(255,255,255,.28)",
+                          backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)" }}>
+              {initials(a.me?.name || a.user.name || "Т")}
+            </div>
+            <div className="text-[22px] font-bold mt-3 tracking-[-0.02em]">
+              {a.me?.name || a.user.name || "Трейдер"}
+            </div>
+            <div className="text-[13px] mt-0.5 flex items-center gap-1.5" style={{ color: "var(--label-2)" }}>
+              {a.me?.username ? `@${a.me.username}` : a.me?.phone || "профиль не заполнен"}
+              {a.me?.role === "admin" && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold"
+                      style={{ background: "rgba(255,255,255,.16)", color: "#fff" }}>
+                  <BadgeCheck size={11} /> владелец
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5">
-          <Press onClick={() => setPlans(true)} className="block">
-            <Glass flat className="p-3.5 h-full">
-              <span className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: "var(--tint-grad)", color: "#fff" }}>
-                <BadgeCheck size={16} />
+        {/* Карточка счёта заезжает на фото — как в референсе. Кнопка справа
+            переключает счёт, а не «что-нибудь»: это главное действие этой
+            строки, и прятать его в настройки незачем. */}
+        <div className="-mt-7 relative z-10">
+          <Glass className="p-3 flex items-center gap-3">
+            <span className="w-11 h-11 rounded-[13px] flex items-center justify-center shrink-0"
+                  style={{ background: "var(--tint-grad)", color: "#fff" }}>
+              <Wallet size={19} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold">
+                Счёт бота · {a.mode === "live" ? "боевой" : "демо"}
               </span>
-              <div className="text-[15px] font-semibold mt-2">
-                {a.sub.active ? a.sub.plan : "Без подписки"}
-              </div>
-              <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
-                ваш тариф · комиссия {a.sub.active ? "4%" : "15%"}
-              </div>
-            </Glass>
-          </Press>
-          <Press onClick={() => setSettings(true)} className="block">
-            <Glass flat className="p-3.5 h-full">
-              <span className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: a.mode === "live" ? "var(--red)" : "var(--label-3)",
-                             color: a.mode === "live" ? "#fff" : "var(--label)" }}>
-                <Sliders size={16} />
+              <span className="block text-[12px] mt-0.5 tabular-nums" style={{ color: "var(--label-2)" }}>
+                Bybit · {a.api.connected ? a.api.key : "ключи не привязаны"}
               </span>
-              <div className="text-[15px] font-semibold mt-2">
-                {a.mode === "live" ? "Боевой счёт" : "Демо-счёт"}
-              </div>
-              <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
-                риск ${a.settings.riskUsd} на сделку · настройки
-              </div>
-            </Glass>
+            </span>
+            <Press onClick={() => { haptic.tap(); setSettings(true); }} scale={0.92}>
+              <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: "#fff", color: "#111" }}>
+                <ArrowLeftRight size={17} />
+              </span>
+            </Press>
+          </Glass>
+        </div>
+
+        {/* Что подключено — одним списком, как в референсе. Это ответ на
+            вопрос «через что бот вообще имеет доступ к деньгам и ко мне». */}
+        <div className="flex items-center justify-between mt-4 mb-2 px-1">
+          <span className="text-[15px] font-semibold">Подключено</span>
+          <Press onClick={() => { haptic.tap(); setApiSheet(true); }} scale={0.92}>
+            <span className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ background: "var(--label-3)", color: "var(--label)" }}>
+              <Plus size={16} />
+            </span>
           </Press>
         </div>
+        <Glass flat className="overflow-hidden">
+          <Row icon={<KeyRound size={16} />} title="Ключи биржи"
+               note={a.api.connected ? `Bybit · ${a.api.key}` : "не привязаны"}
+               right={<Mark ok={a.api.connected} />} onClick={() => setApiSheet(true)} />
+          <Row icon={<BadgeCheck size={16} />} title="Номер в Telegram"
+               note={a.me?.phoneOk ? a.me.phone : "не подтверждён"}
+               right={<Mark ok={Boolean(a.me?.phoneOk)} />} />
+          <Row icon={<Percent size={16} />} title="Схема выхода"
+               note={a.scheme ? `лонг: ${a.scheme.long}` : "из сигнала"}
+               right={<ChevronRight size={17} />} onClick={() => setSettings(true)} last />
+        </Glass>
       </div>
 
       {/* ── Баланс ─────────────────────────────────────────────────────────── */}
@@ -698,4 +727,15 @@ function Stepper({ value, suffix, step, onChange }: {
 function initials(name: string): string {
   const p = name.trim().split(/\s+/).filter(Boolean);
   return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "Т";
+}
+
+/** Галочка «подключено» одним значком: в списке важен ответ да/нет, а не текст. */
+function Mark({ ok }: { ok: boolean }) {
+  return (
+    <span className="w-[22px] h-[22px] rounded-full flex items-center justify-center shrink-0"
+          style={{ background: ok ? "color-mix(in srgb, var(--green) 22%, transparent)" : "var(--label-3)",
+                   color: ok ? "var(--green)" : "var(--label-2)" }}>
+      {ok ? <Check size={13} strokeWidth={3} /> : <Plus size={13} strokeWidth={3} />}
+    </span>
+  );
 }

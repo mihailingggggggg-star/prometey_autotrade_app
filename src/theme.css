@@ -270,22 +270,24 @@ html.desk { --safe-t: 42px; --safe-b: 20px; }
 }
 .aurora__a {
   width: 78%; padding-bottom: 78%; right: -14%; top: -34%;
+  /* Свет перекрашен под общий акцент: синее пятно рядом с красными кнопками
+     читалось как чужой элемент из другого приложения. */
   background: radial-gradient(circle at 42% 42%,
-              #4aa8ff 0%, #1f6fe8 38%, rgba(29,78,216,.45) 58%, transparent 72%);
+              #ff5c6e 0%, #d61733 38%, rgba(160,16,40,.45) 58%, transparent 72%);
   filter: blur(26px);
   animation: aurora-a 26s var(--ease-io) infinite alternate;
 }
 .aurora__b {
   width: 58%; padding-bottom: 58%; right: 2%; top: -6%;
   background: radial-gradient(circle at 50% 50%,
-              #8b5cf6 0%, rgba(109,40,217,.55) 45%, transparent 70%);
+              #b21e46 0%, rgba(120,18,50,.55) 45%, transparent 70%);
   filter: blur(30px); opacity: .75;
   animation: aurora-b 31s var(--ease-io) infinite alternate;
 }
 /* Яркое ядро: без него пятно читается как заливка, а не как свет. */
 .aurora__c {
   width: 26%; padding-bottom: 26%; right: 16%; top: 4%;
-  background: radial-gradient(circle at 50% 50%, #cfe6ff 0%, #6fb6ff 45%, transparent 70%);
+  background: radial-gradient(circle at 50% 50%, #ffd9dd 0%, #ff7b88 45%, transparent 70%);
   filter: blur(18px); opacity: .55;
   animation: aurora-c 19s var(--ease-io) infinite alternate;
 }
