@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import {
-  ArrowLeftRight, BadgeCheck, BookOpen, Check, ChevronRight, Copy, CreditCard, Download,
+  BadgeCheck, BookOpen, Check, ChevronRight, Copy, Download,
   ExternalLink, KeyRound, LifeBuoy, Lock, Percent, Plug, Plus, Receipt, RefreshCw, ShieldAlert,
-  Sliders, Wallet,
+  Settings2, Sliders, Wallet,
 } from "lucide-react";
 import { Aurora, Glass, GroupLabel, Modal, Press, Row, Segmented, Sheet, Title, Toggle, tone }
   from "../ui/kit";
@@ -70,88 +70,94 @@ export function Cabinet() {
           </div>
         </div>
 
-        {/* Карточка счёта заезжает на фото — как в референсе. Кнопка справа
-            переключает счёт, а не «что-нибудь»: это главное действие этой
-            строки, и прятать его в настройки незачем. */}
-        <div className="-mt-7 relative z-10">
-          <Glass className="p-3 flex items-center gap-3">
-            <span className="w-11 h-11 rounded-[13px] flex items-center justify-center shrink-0"
-                  style={{ background: "var(--tint-grad)", color: "#fff" }}>
-              <Wallet size={19} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[15px] font-semibold">
-                Счёт бота · {a.mode === "live" ? "боевой" : "демо"}
-              </span>
-              <span className="block text-[12px] mt-0.5 tabular-nums" style={{ color: "var(--label-2)" }}>
-                Bybit · {a.api.connected ? a.api.key : "ключи не привязаны"}
-              </span>
-            </span>
-            <Press onClick={() => { haptic.tap(); setSettings(true); }} scale={0.92}>
-              <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                    style={{ background: "#fff", color: "#111" }}>
-                <ArrowLeftRight size={17} />
-              </span>
+        {/* ── БАЛАНС ────────────────────────────────────────────────────────
+            Главное число кабинета стоит первым и заезжает на фото — на то
+            место, где в референсе лежала карточка счёта. Сюда заходят
+            посмотреть, сколько на счету; «через что подключён бот» — вопрос
+            редкий и разовый. Раньше баланс лежал ниже списка доступов, то
+            есть за двумя экранами прокрутки от заголовка «Кабинет». */}
+        <div className="-mt-7 relative z-10" data-coach="balance">
+          <Glass className="p-5">
+            <div className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
+              Свободно на счёте бота · {a.mode === "live" ? "боевой" : "демо"}
+            </div>
+            <div className="num-hero mt-1">${a.balance.toFixed(2)}</div>
+            <div className="flex items-center gap-4 mt-2 text-[14px]" style={{ color: "var(--label-2)" }}>
+              <span>в позициях ${a.inPositions.toFixed(2)}</span>
+              <span>депозит биржи ${a.deposit.toFixed(2)}</span>
+            </div>
+            {/* У владельца пополнение мгновенное и «из воздуха» — это для показа
+                и отладки. Остальные платят по-настоящему: перевод USDT, который
+                подтверждает человек. Одна кнопка с двумя разными смыслами была бы
+                ловушкой, поэтому и надпись разная. */}
+            <Press feel="press" className="block w-full mt-4"
+                   onClick={() => a.can.topupFree
+                     ? a.topUp(50)
+                     : setPay({ title: "Пополнение баланса", amount: 50, note: "Любая сумма от $10" })}>
+              <div className="py-3 rounded-[14px] text-center text-[16px] font-semibold text-white"
+                   style={{ background: "var(--tint-grad)" }}>
+                {a.can.topupFree ? "Начислить $50 (владелец)" : "Пополнить"}
+              </div>
             </Press>
           </Glass>
         </div>
 
-        {/* Что подключено — одним списком, как в референсе. Это ответ на
-            вопрос «через что бот вообще имеет доступ к деньгам и ко мне». */}
-        <div className="flex items-center justify-between mt-4 mb-2 px-1">
-          <span className="text-[15px] font-semibold">Подключено</span>
-          <Press onClick={() => { haptic.tap(); setApiSheet(true); }} scale={0.92}>
-            <span className="w-8 h-8 rounded-full flex items-center justify-center"
-                  style={{ background: "var(--label-3)", color: "var(--label)" }}>
-              <Plus size={16} />
+        {/* ── НАСТРОЙКИ БОТА ────────────────────────────────────────────────
+            Та же акцентная карточка, что раньше стояла у счёта: крупный значок
+            на красном градиенте и круглая белая кнопка справа. Значок —
+            ползунки настроек, а не кошелёк: кошелёк обещал деньги, а ведёт
+            карточка в режимы, плечо и схему выхода. Деньги теперь прямо над
+            ней, и обещание с содержимым наконец совпадают.
+
+            Нажимается вся карточка целиком, а не одна кнопка в углу: круглая
+            кнопка остаётся там, куда смотрит глаз, но промахнуться мимо неё
+            больше нельзя. */}
+        <Press onClick={() => { haptic.tap(); setSettings(true); }} scale={0.985}
+               className="block w-full mt-2.5">
+          <Glass className="p-3 flex items-center gap-3">
+            <span className="w-11 h-11 rounded-[13px] flex items-center justify-center shrink-0"
+                  style={{ background: "var(--tint-grad)", color: "#fff" }}>
+              <Settings2 size={19} />
             </span>
-          </Press>
-        </div>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold">Настройки бота</span>
+              <span className="block text-[12px] mt-0.5 truncate" style={{ color: "var(--label-2)" }}>
+                {a.mode === "live" ? "боевой счёт" : "демо-счёт"} · режимы, плечо, лимиты
+              </span>
+            </span>
+            <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: "#fff", color: "#111" }}>
+              <ChevronRight size={18} />
+            </span>
+          </Glass>
+        </Press>
+      </div>
+
+      {/* ── Торговля ────────────────────────────────────────────────────────
+          Сразу после настроек: это те же настройки, только вынесенные
+          отдельными строками, потому что их открывают чаще остальных. */}
+      <GroupLabel>Торговля</GroupLabel>
+      <div className="px-4" data-coach="risk">
         <Glass flat className="overflow-hidden">
-          <Row icon={<KeyRound size={16} />} title="Ключи биржи"
-               note={a.api.connected ? `Bybit · ${a.api.key}` : "не привязаны"}
-               right={<Mark ok={a.api.connected} />} onClick={() => setApiSheet(true)} />
-          <Row icon={<BadgeCheck size={16} />} title="Номер в Telegram"
-               note={a.me?.phoneOk ? a.me.phone : "не подтверждён"}
-               right={<Mark ok={Boolean(a.me?.phoneOk)} />} />
-          <Row icon={<Percent size={16} />} title="Схема выхода"
-               note={a.scheme ? `лонг: ${a.scheme.long}` : "из сигнала"}
-               right={<ChevronRight size={17} />} onClick={() => setSettings(true)} last />
+          <Row icon={<Sliders size={16} />} title="Риск на сделку"
+               note={a.riskAlert
+                 ? `$${a.settings.riskUsd} — это ${((a.settings.riskUsd / a.deposit) * 100).toFixed(1)}% депозита`
+                 : "сколько теряем при срабатывании стопа"}
+               right={<b>${a.settings.riskUsd}</b>} onClick={() => setSettings(true)} />
+          <Row last icon={<Percent size={16} />} title="Схема выхода"
+               note={a.scheme ? `лонг: ${a.scheme.long}` : "ступени из сигнала скринера"}
+               right={<ChevronRight size={17} />} onClick={() => setSettings(true)} />
         </Glass>
-      </div>
-
-      {/* ── Баланс ─────────────────────────────────────────────────────────── */}
-      <div className="px-4" data-coach="balance">
-        <Glass className="p-5">
-          <div className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
-            Свободно на счёте бота
-          </div>
-          <div className="num-hero mt-1">${a.balance.toFixed(2)}</div>
-          <div className="flex items-center gap-4 mt-2 text-[14px]" style={{ color: "var(--label-2)" }}>
-            <span>в позициях ${a.inPositions.toFixed(2)}</span>
-            <span>депозит биржи ${a.deposit.toFixed(2)}</span>
-          </div>
-          {/* У владельца пополнение мгновенное и «из воздуха» — это для показа
-              и отладки. Остальные платят по-настоящему: перевод USDT, который
-              подтверждает человек. Одна кнопка с двумя разными смыслами была бы
-              ловушкой, поэтому и надпись разная. */}
-          <Press feel="press" className="block w-full mt-4"
-                 onClick={() => a.can.topupFree
-                   ? a.topUp(50)
-                   : setPay({ title: "Пополнение баланса", amount: 50, note: "Любая сумма от $10" })}>
-            <div className="py-3 rounded-[14px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint-grad)" }}>
-              {a.can.topupFree ? "Начислить $50 (владелец)" : "Пополнить"}
+        {a.riskAlert && (
+          <Glass flat className="p-3.5 mt-2.5 flex items-start gap-3">
+            <ShieldAlert size={19} style={{ color: "var(--orange)" }} className="shrink-0 mt-0.5" />
+            <div className="text-[13px] leading-snug">
+              Риск выше 5% депозита. Три стопа подряд заберут
+              {" "}{((a.settings.riskUsd * 3 / a.deposit) * 100).toFixed(0)}% счёта — это много.
+              Рекомендуем не больше <b>${Math.floor(a.deposit * 0.05)}</b> на сделку.
             </div>
-          </Press>
-        </Glass>
-      </div>
-
-      {/* Постоянный вход к установке ярлыка: карточку на главной можно скрыть
-          навсегда, и без этой строки функция пропала бы вместе с ней. */}
-      <div className="px-4 mt-2.5 space-y-2.5">
-        <AddToHomeRow />
-        <DiagRow />
+          </Glass>
+        )}
       </div>
 
       {/* ── Комиссия и подписка ────────────────────────────────────────────── */}
@@ -183,36 +189,44 @@ export function Cabinet() {
         </p>
       </div>
 
-      {/* ── Настройки бота ─────────────────────────────────────────────────── */}
-      <GroupLabel>Торговля</GroupLabel>
-      <div className="px-4" data-coach="risk">
+      {/* ── Доступы ─────────────────────────────────────────────────────────
+          Ответ на вопрос «через что бот вообще имеет доступ к деньгам и ко
+          мне». Настраивается один раз, поэтому стоит ниже того, что смотрят
+          каждый день. Ключи биржи живут ТОЛЬКО здесь: раньше та же строка
+          дублировалась в «Торговле», и два входа в одно место читались как
+          две разные настройки. */}
+      <div className="px-4">
+        {/* Заголовок набран как у остальных групп, а не отдельным крупным
+            шрифтом: раньше «Подключено» стояло единственной группой в
+            кабинете и могло быть каким угодно, теперь оно одно из пяти, и
+            своя типографика читалась бы как чужой блок. */}
+        <div className="flex items-center justify-between pt-5 pb-2">
+          <span className="text-[13px] uppercase tracking-wide font-medium"
+                style={{ color: "var(--label-2)" }}>Подключено</span>
+          <Press onClick={() => { haptic.tap(); setApiSheet(true); }} scale={0.92}>
+            <span className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ background: "var(--label-3)", color: "var(--label)" }}>
+              <Plus size={16} />
+            </span>
+          </Press>
+        </div>
         <Glass flat className="overflow-hidden">
-          <Row icon={<Sliders size={16} />} title="Риск на сделку"
-               note={a.riskAlert
-                 ? `$${a.settings.riskUsd} — это ${((a.settings.riskUsd / a.deposit) * 100).toFixed(1)}% депозита`
-                 : "сколько теряем при срабатывании стопа"}
-               right={<b>${a.settings.riskUsd}</b>} onClick={() => setSettings(true)} />
-          <Row icon={<Plug size={16} />} title="Настройки бота"
-               note="режимы, плечо, схема выхода, лимиты" right={<ChevronRight size={17} />}
-               onClick={() => setSettings(true)} />
-          <Row last icon={<KeyRound size={16} />} title="API-ключи Bybit"
-               note={a.api.connected ? `подключено · ${a.api.key}` : "не подключены"}
-               right={<span className="flex items-center gap-1.5">
-                 <span className="w-2 h-2 rounded-full"
-                       style={{ background: a.api.connected ? "var(--green)" : "var(--red)" }} />
-                 <ChevronRight size={17} />
-               </span>} onClick={() => setApiSheet(true)} />
+          <Row icon={<KeyRound size={16} />} title="Ключи биржи"
+               note={a.api.connected ? `Bybit · ${a.api.key}` : "не привязаны"}
+               right={<Mark ok={a.api.connected} />} onClick={() => setApiSheet(true)} />
+          <Row last icon={<BadgeCheck size={16} />} title="Номер в Telegram"
+               note={a.me?.phoneOk ? a.me.phone : "не подтверждён"}
+               right={<Mark ok={Boolean(a.me?.phoneOk)} />} />
         </Glass>
-        {a.riskAlert && (
-          <Glass flat className="p-3.5 mt-2.5 flex items-start gap-3">
-            <ShieldAlert size={19} style={{ color: "var(--orange)" }} className="shrink-0 mt-0.5" />
-            <div className="text-[13px] leading-snug">
-              Риск выше 5% депозита. Три стопа подряд заберут
-              {" "}{((a.settings.riskUsd * 3 / a.deposit) * 100).toFixed(0)}% счёта — это много.
-              Рекомендуем не больше <b>${Math.floor(a.deposit * 0.05)}</b> на сделку.
-            </div>
-          </Glass>
-        )}
+      </div>
+
+      {/* ── Приложение ──────────────────────────────────────────────────────
+          Ярлык и диагностика — про саму программу, а не про торговлю. Раньше
+          они стояли между балансом и подпиской, то есть посреди денег. */}
+      <GroupLabel>Приложение</GroupLabel>
+      <div className="px-4 space-y-2.5">
+        <AddToHomeRow />
+        <DiagRow />
       </div>
 
       {/* ── Поддержка ──────────────────────────────────────────────────────── */}

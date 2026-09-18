@@ -303,8 +303,8 @@ export function Slider({
    нажатие. Нажатие обрабатывает родитель (строка целиком — цель побольше). */
 export function Check3({ on, size = 20 }: { on: boolean; size?: number }) {
   return (
-    <span className="relative shrink-0 rounded-[7px] overflow-hidden lg lg-soft"
-          style={{ width: size, height: size }}>
+    <span className="relative shrink-0 rounded-[7px] overflow-hidden"
+          style={{ width: size, height: size, border: "1px solid var(--label-3)" }}>
       <motion.span className="absolute inset-0"
                    style={{ background: "var(--tint-grad)" }}
                    initial={false} animate={{ opacity: on ? 1 : 0 }}

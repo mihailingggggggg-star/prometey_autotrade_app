@@ -49,7 +49,7 @@ export function LensButton({ lens, onLens }: { lens: Lens; onLens: (l: Lens) => 
   return (
     <>
       <Press onClick={() => { haptic.tap(); setOpen(true); }} scale={0.9}>
-        <span className="relative flex items-center justify-center w-8 h-8 rounded-[10px] lg">
+        <span className="relative flex items-center justify-center w-8 h-8 rounded-[10px] chrome">
           <Eye size={15} style={{ color: n ? "var(--lime)" : "var(--label-2)" }} />
           {!!n && (
             <span className="absolute -top-1 -right-1 w-[15px] h-[15px] rounded-full text-[9px]
