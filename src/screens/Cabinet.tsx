@@ -27,19 +27,68 @@ export function Cabinet() {
 
   return (
     <div className="pb-2">
-      <Title sub={a.me?.name || a.user.name || "Личный кабинет"}>Кабинет</Title>
+      <Title sub="Профиль и настройки">Кабинет</Title>
 
-      {/* Роль видна сразу: у владельца счёта есть права, которых нет у
-          остальных, и держать это в тайне от него самого незачем. */}
-      {a.me?.role === "admin" && (
-        <div className="px-4 -mt-1 mb-2">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-semibold"
-                style={{ background: "color-mix(in srgb, var(--tint) 18%, transparent)",
-                         color: "var(--tint)" }}>
-            <BadgeCheck size={13} /> Владелец счёта
-          </span>
+      {/* ── Профиль ──────────────────────────────────────────────────────────
+          Лицо, имя и две плитки сверху — как в референсе владельца. Плитки
+          показывают РЕАЛЬНЫЕ вещи (тариф и счёт бота), а не украшения:
+          нарисовать «Referrals», которого в автотрейде нет, значило бы
+          пообещать функцию картинкой. */}
+      <div className="px-4">
+        <div className="flex flex-col items-center pt-1 pb-3">
+          <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center text-[28px]
+                          font-bold"
+               style={{ background: "linear-gradient(145deg, var(--lime), #8fbf2f)", color: "#0b0f07",
+                        boxShadow: "0 10px 26px -10px color-mix(in srgb, var(--lime) 70%, transparent)" }}>
+            {initials(a.me?.name || a.user.name || "Т")}
+          </div>
+          <div className="text-[21px] font-bold mt-2.5 tracking-[-0.02em]">
+            {a.me?.name || a.user.name || "Трейдер"}
+          </div>
+          <div className="text-[13px] mt-0.5 flex items-center gap-1.5" style={{ color: "var(--label-2)" }}>
+            {a.me?.username ? `@${a.me.username}` : a.me?.phone || "профиль не заполнен"}
+            {a.me?.role === "admin" && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-semibold"
+                    style={{ background: "color-mix(in srgb, var(--lime) 20%, transparent)",
+                             color: "var(--lime)" }}>
+                <BadgeCheck size={11} /> владелец
+              </span>
+            )}
+          </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-2 gap-2.5">
+          <Press onClick={() => setPlans(true)} className="block">
+            <Glass flat className="p-3.5 h-full">
+              <span className="w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ background: "var(--lime)", color: "#0b0f07" }}>
+                <BadgeCheck size={16} />
+              </span>
+              <div className="text-[15px] font-semibold mt-2">
+                {a.sub.active ? a.sub.plan : "Без подписки"}
+              </div>
+              <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
+                ваш тариф · комиссия {a.sub.active ? "4%" : "15%"}
+              </div>
+            </Glass>
+          </Press>
+          <Press onClick={() => setSettings(true)} className="block">
+            <Glass flat className="p-3.5 h-full">
+              <span className="w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ background: a.mode === "live" ? "var(--red)" : "var(--label-3)",
+                             color: a.mode === "live" ? "#fff" : "var(--label)" }}>
+                <Sliders size={16} />
+              </span>
+              <div className="text-[15px] font-semibold mt-2">
+                {a.mode === "live" ? "Боевой счёт" : "Демо-счёт"}
+              </div>
+              <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
+                риск ${a.settings.riskUsd} на сделку · настройки
+              </div>
+            </Glass>
+          </Press>
+        </div>
+      </div>
 
       {/* ── Баланс ─────────────────────────────────────────────────────────── */}
       <div className="px-4" data-coach="balance">
@@ -642,4 +691,11 @@ function Stepper({ value, suffix, step, onChange }: {
       <Press onClick={() => onChange(+(value + step).toFixed(2))} className="px-2.5 py-1 text-[15px]">+</Press>
     </div>
   );
+}
+
+/** Инициалы для аватара: фотографии Telegram у веб-версии нет (её отдаёт только
+ *  сам мессенджер), а пустой круг выглядит недогруженным. */
+function initials(name: string): string {
+  const p = name.trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "Т";
 }
