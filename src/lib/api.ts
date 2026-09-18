@@ -98,6 +98,12 @@ export function dropSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch { /* не критично */ }
 }
 
+/** Откуда сделка. Два контура живут по разным правилам: у скринера сигнал —
+ *  это уровень, живущий часами и закрывающийся ценой; у алгоса — состояние
+ *  ленты, живущее минуты и закрывающееся тем, что состояние кончилось.
+ *  Смешивать их результаты в одну статистику значит не измерить ни один. */
+export type Source = "screener" | "algo";
+
 export type ApiPosition = {
   id: string; symbol: string; side: "long" | "short"; lev: number;
   entry: number; mark: number; sl: number; slPlan: number;
@@ -110,6 +116,10 @@ export type ApiPosition = {
   notional: number; margin: number; marginFrom: string;
   status: "pending" | "open"; entryType: "market" | "limit";
   score: number; whale: boolean; upl?: number;
+  /** Контур сделки: `screener` — сигнал воронки скринера, `algo` — режим
+   *  чтения тиковой ленты. Поле может не прийти со старого бота — тогда это
+   *  скринер, а не «неизвестно». */
+  source?: Source;
 };
 
 export type ApiTrade = {
@@ -118,6 +128,7 @@ export type ApiTrade = {
   reason: string; closedAt: number; heldMin: number; fee: number;
   mfe: number; mae: number; scheme: string; score: number; whale: boolean;
   entryType: "market" | "limit"; lev: number; risk: number; hits: number | null;
+  source?: Source;
 };
 
 export type ApiMe = {
@@ -196,7 +207,7 @@ export const getTrades = (days = 0, s?: AbortSignal) =>
 
 export type ApiSignal = {
   id: string; symbol: string; side: "long" | "short"; score: number; whale: boolean;
-  at: number; status: string; entryType: "market" | "limit";
+  at: number; status: string; entryType: "market" | "limit"; source?: Source;
   pnl: number | null; r: number | null;
 };
 export const getSignals = (s?: AbortSignal) =>

@@ -27,6 +27,8 @@ export type Position = {
   tps?: { price: number; weight: number }[];
   /** pending — лимитка выставлена, но ещё не налилась: позиции физически нет. */
   status?: "pending" | "open";
+  /** Контур: скринер или «алгос» (чтение тиковой ленты). Отсутствует = скринер. */
+  source?: "screener" | "algo";
 };
 
 export type Trade = {
@@ -37,6 +39,7 @@ export type Trade = {
    *  должен ронять экран истории. */
   reason: string;
   closedAt: number; heldMin: number; fee: number; mfe: number; mae: number; scheme: string;
+  source?: "screener" | "algo";
 };
 
 export type Signal = {

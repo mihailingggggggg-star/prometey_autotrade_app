@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
          TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Sheet, Title, cssVar, tone, SPRING } from "../ui/kit";
+import { Glass, Modal, Press, Sheet, Title, cssVar, tone, SPRING, AlgoTag } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
 import { money, price, pct, rr, ago } from "../lib/format";
@@ -71,6 +71,7 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
                   style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
               {up ? "LONG" : "SHORT"} {p.lev}×
             </span>
+            <AlgoTag source={p.source} />
             {/* Лимитка ещё не налилась — позиции физически нет, и называть её
                 позицией нельзя: PnL по ней не существует. */}
             {p.status === "pending" && (
@@ -149,6 +150,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
             </span>
           </Press>
           <span className="ml-auto mr-1 text-[16px] font-semibold">{p.symbol}</span>
+          <AlgoTag source={p.source} className="mr-1" />
           {tk && (
             <span className="mr-2 text-[13px] font-semibold"
                   style={{ color: tk.pct24h >= 0 ? "var(--green)" : "var(--red)" }}>
@@ -456,6 +458,7 @@ function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
 
       <div className="flex items-center gap-2 px-3 py-2 hairline">
         <span className="text-[16px] font-semibold">{p.symbol}</span>
+        <AlgoTag source={p.source} />
         <span className="text-[15px] tabular-nums" style={{ color: "var(--label)" }}>{price(p.mark)}</span>
         {tk && (
           <span className="text-[13px] font-semibold"

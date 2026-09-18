@@ -95,7 +95,7 @@ function toPosition(p: ApiPosition, mark: number): M.Position {
     entry: p.entry, mark: mark || p.mark || p.entry,
     sl: p.sl, tp: p.tp, tps: p.tps, be: p.be ?? undefined,
     size: p.size, risk: p.risk, openedAt: p.openedAt, scheme: p.scheme,
-    status: p.status, entryType: p.entryType, upl: p.upl,
+    status: p.status, entryType: p.entryType, upl: p.upl, source: p.source,
     /* Номинал пересчитываем по ЖИВОЙ цене из потока Bybit: серверный считался
        на момент опроса, а цена с тех пор ушла. Маржа — как пришла: она
        заморожена на бирже и от тика не меняется. */
@@ -109,6 +109,7 @@ function toTrade(t: ApiTrade): M.Trade {
     id: t.id, symbol: t.symbol, side: t.side, entry: t.entry, exit: t.exit,
     pnl: t.pnl, r: t.r, reason: t.reason, closedAt: t.closedAt || 0,
     heldMin: t.heldMin, fee: t.fee, mfe: t.mfe, mae: t.mae, scheme: t.scheme,
+    source: t.source,
   };
 }
 
@@ -223,7 +224,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signals = useMemo<M.Signal[]>(() => demo ? M.signals : server.signals.map((s) => ({
     id: s.id, symbol: s.symbol, side: s.side, score: s.score, at: s.at,
     status: s.status as M.Signal["status"],
-    phase: s.whale ? "кит" : s.entryType === "limit" ? "лимитка" : "по рынку",
+    phase: s.source === "algo" ? "алгос"
+         : s.whale ? "кит" : s.entryType === "limit" ? "лимитка" : "по рынку",
   })), [demo, server.signals]);
 
   const payments = useMemo<M.Payment[]>(() => demo ? M.payments : server.payments.map((p) => ({

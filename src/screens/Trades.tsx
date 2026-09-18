@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Maximize2, Search, Share2, X } from "lucide-react";
-import { Glass, GroupLabel, Press, Segmented, Title, tone } from "../ui/kit";
+import { AlgoTag, Glass, GroupLabel, Press, Segmented, Title, tone } from "../ui/kit";
 import { Dash } from "./Dash";
 import { useApp } from "../lib/store";
 import type { Trade } from "../lib/mock";
@@ -21,6 +21,21 @@ const portal = (node: ReactNode) => {
   const host = typeof document === "undefined" ? null : document.getElementById("root");
   return host ? createPortal(node, host) : node;
 };
+
+/** Контур, по которому смотрим аналитику.
+ *
+ *  Разделение обязательно, а не «удобно»: у контуров разный горизонт и разная
+ *  частота. Алгос закрывает сделку за минуты и делает их кратно больше — слитые
+ *  в одну кучу, они переписывают собой винрейт, среднюю длительность и
+ *  профит-фактор, и по общей цифре нельзя судить ни об одном из двух.
+ *  Переключатель появляется ТОЛЬКО когда сделки алгоса в периоде есть: пока
+ *  режим выключен, лишний орган управления объяснял бы то, чего нет. */
+type Src = "all" | "screener" | "algo";
+const SRC: { id: Src; label: string }[] = [
+  { id: "all", label: "Все" },
+  { id: "screener", label: "Скринер" },
+  { id: "algo", label: "Алгос" },
+];
 
 type P = "d" | "w" | "m" | "all";
 const OPTS: { id: P; label: string; days: number }[] = [
@@ -48,18 +63,29 @@ const reasonOf = (code: string) => REASON[code] || { t: code, c: "var(--label-2)
 export function Trades() {
   const { trades } = useApp();
   const [p, setP] = useState<P>("m");
+  const [src, setSrc] = useState<Src>("all");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const rows = useMemo(() => {
+  /* Сделки периода ДО фильтра по контуру — по ним решаем, показывать ли сам
+     переключатель. Считать это по отфильтрованному списку нельзя: выбрав
+     «Алгос», мы бы спрятали переключатель, которым только что воспользовались. */
+  const inPeriod = useMemo(() => {
     /* Границы периода — по КАЛЕНДАРНЫМ суткам Бишкека (см. lib/stats): было
        скользящее окно, и «Сегодня» показывало последние 24 часа, то есть
        половину вчерашнего дня в придачу. */
     const from = windowStart(OPTS.find((o) => o.id === p)!.days);
-    return trades
-      .filter((t) => t.closedAt >= from)
-      .filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase()));
-  }, [trades, p, q]);
+    return trades.filter((t) => t.closedAt >= from);
+  }, [trades, p]);
+
+  const hasAlgo = useMemo(() => inPeriod.some((t) => t.source === "algo"), [inPeriod]);
+
+  const rows = useMemo(() => inPeriod
+    /* Ряд без метки — скринер, а не «неизвестно»: так записаны все сделки до
+       появления второго контура. */
+    .filter((t) => src === "all" || (t.source || "screener") === src)
+    .filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase())),
+    [inPeriod, src, q]);
 
   return (
     <div className="pb-2">
@@ -68,6 +94,12 @@ export function Trades() {
       <div className="px-4" data-coach="period">
         <Segmented value={p} onChange={setP} options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
       </div>
+
+      {hasAlgo && (
+        <div className="px-4 mt-2">
+          <Segmented value={src} onChange={setSrc} options={SRC} />
+        </div>
+      )}
 
       {/* ── Дашборды ───────────────────────────────────────────────────────
           Карточка отвечает на один вопрос одним числом, по тапу открывается
@@ -118,6 +150,7 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
                     style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
                 {t.side === "long" ? "LONG" : "SHORT"}
               </span>
+              <AlgoTag source={t.source} />
             </div>
             <div className="text-[12px] mt-0.5" style={{ color: r.c }}>{r.t} · {dt(t.closedAt)}</div>
           </div>
@@ -297,6 +330,7 @@ function ClosedFull({ t, candles, marks, iv, onClose }: {
                          paddingBottom: "var(--safe-b)" }}>
       <div className="flex items-center gap-2 px-3 py-2 hairline">
         <span className="text-[16px] font-semibold">{t.symbol.replace("USDT", "")}</span>
+        <AlgoTag source={t.source} />
         <span className="text-[13px] px-1.5 py-0.5 rounded-md font-semibold"
               style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
           {t.side === "long" ? "LONG" : "SHORT"}
