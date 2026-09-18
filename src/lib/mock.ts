@@ -16,6 +16,12 @@ export type Position = {
   id: string; symbol: string; side: Side; lev: number;
   entry: number; mark: number; sl: number; tp: number; be?: number;
   size: number; risk: number; openedAt: number; scheme: string;
+  /** Размер в долларах и замороженная маржа. Монеты человеку ни о чём не
+   *  говорят: вопрос всегда «сколько денег в позиции». */
+  notional?: number; margin?: number; marginFrom?: string;
+  /** Нереализованный результат с биржи — для значка PnL на линии входа. */
+  upl?: number;
+  entryType?: "market" | "limit";
   /** Ступени фиксации целиком. У шорта их три, у лонга одна — рисовать одну
    *  цель там, где в стакане стоит лесенка, значит показать треть плана. */
   tps?: { price: number; weight: number }[];

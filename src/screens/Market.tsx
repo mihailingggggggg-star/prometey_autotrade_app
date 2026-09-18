@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { CandlestickSeries, createChart, LineStyle,
-         type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
-import { ChevronLeft, Inbox, Maximize2, OctagonX, SlidersHorizontal, TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Sheet, Title, tone, SPRING } from "../ui/kit";
+import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
+         TrendingDown, TrendingUp, X } from "lucide-react";
+import { Glass, Modal, Press, Sheet, Title, cssVar, tone, SPRING } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
 import { money, price, pct, rr, ago } from "../lib/format";
 import { haptic } from "../lib/tg";
-import { useCandles, useTickers } from "../lib/useMarket";
-import { decimalsOf, INTERVALS, type Interval } from "../lib/market";
+import { useTickers } from "../lib/useMarket";
+import { INTERVALS, type Interval } from "../lib/market";
+import { TradeChart, type Lens, type Level, type PaneKind } from "../ui/TradeChart";
+import { AddPaneStrip, LensButton, PaneSheet, readLens, readPanes, saveLens, savePanes }
+  from "./ChartTools";
+import { useSwipe } from "../lib/swipe";
 
 export function Market() {
   const { positions, feed } = useApp();
@@ -112,7 +115,7 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
 
 /* ── Детальный экран тикера ─────────────────────────────────────────────────── */
 function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
-  const { closePosition, updateLevels } = useApp();
+  const { closePosition, updateLevels, moveEntry } = useApp();
   const [confirm, setConfirm] = useState(false);
   const [edit, setEdit] = useState(false);
   const [tp, setTp] = useState(p.tp);
@@ -121,9 +124,18 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
   const [fullChart, setFullChart] = useState(false);
   const tk = useTickers([p.symbol])[p.symbol];
   const { usd, r, pending } = posPnl(p);
+  const [lens, setLensRaw] = useState(readLens());
+  const [panes, setPanesRaw] = useState(readPanes());
+  const setLens = (l: typeof lens) => { setLensRaw(l); saveLens(l); };
+  const setPanes = (v: typeof panes) => { setPanesRaw(v); savePanes(v); };
+  /* Перетащенный уровень СНАЧАЛА спрашивает. За этими линиями стоят настоящие
+     заявки на бирже, и жест пальцем не имеет права отправлять ордер молча. */
+  const [ask, setAsk] = useState<{ kind: Level["kind"]; price: number } | null>(null);
+  const levels = useLevels(p, pending);
+  const back = useSwipe({ onRight: onClose });
 
   return (
-    <motion.div
+    <motion.div {...back}
       initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
       transition={{ type: "spring", stiffness: 380, damping: 36 }}
       className="fixed inset-0 z-50 scroll"
@@ -192,15 +204,25 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                 </Press>
               ))}
             </div>
-            <div className="relative">
-              <Chart p={p} interval={tf} />
-              <Press onClick={() => { haptic.tap(); setFullChart(true); }}
-                     className="absolute right-1 top-1 z-10" scale={0.9}>
-                <span className="flex items-center justify-center w-8 h-8 rounded-[10px] chrome">
-                  <Maximize2 size={15} style={{ color: "var(--label-2)" }} />
-                </span>
-              </Press>
+            {/* data-noswipe: горизонтальный жест здесь принадлежит графику —
+                он тянет время. Без метки свайп по графику листал бы вкладки. */}
+            <div className="relative" data-noswipe>
+              <TradeChart symbol={p.symbol} interval={tf} levels={levels} lens={lens}
+                          panes={panes}
+                          pnl={pending ? null : { usd, r }}
+                          onLevel={(kind, value) => setAsk({ kind, price: value })} />
+              {/* Кнопки СЛЕВА: справа у графика ось цены и ручки уровней —
+                  там они спорили бы за одно и то же место. */}
+              <div className="absolute left-1 top-1 z-20 flex flex-col gap-1.5">
+                <Press onClick={() => { haptic.tap(); setFullChart(true); }} scale={0.9}>
+                  <span className="flex items-center justify-center w-8 h-8 rounded-[10px] chrome">
+                    <Maximize2 size={15} style={{ color: "var(--label-2)" }} />
+                  </span>
+                </Press>
+                <LensButton lens={lens} onLens={setLens} />
+              </div>
             </div>
+            <AddPaneStrip panes={panes} onPanes={setPanes} />
             {/* Цвета подписи обязаны совпадать с цветами линий на графике —
                 иначе легенда объясняет не тот график, который нарисован. */}
             <div className="flex items-center justify-center flex-wrap gap-x-3.5 gap-y-1 mt-2 text-[11px]"
@@ -210,12 +232,28 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
               <Legend color="var(--red)" text={`стоп ${price(p.sl)}`} />
               {p.be && <Legend color="var(--orange)" text={`БУ ${price(p.be)}`} />}
             </div>
+            {levels.some((l) => l.drag) && (
+              <div className="text-center text-[10px] mt-1" style={{ color: "var(--label-3)" }}>
+                ручки ⇅ справа тянут уровень — перед отправкой на биржу спросим
+              </div>
+            )}
           </Glass>
         </div>
 
         <div className="px-4 mt-3">
           <Glass flat className="overflow-hidden">
-            <KV k="Размер позиции" v={`${p.size.toLocaleString("ru-RU")} монет`} />
+            {/* В ДОЛЛАРАХ: «300 монет» не отвечает на вопрос, с которым сюда
+                смотрят, — сколько денег в позиции. Монеты остаются подписью:
+                без них не сверить размер с биржей. */}
+            <KV k="Размер позиции"
+                v={`${money(p.notional ?? p.size * p.mark)} · ${p.size.toLocaleString("ru-RU")} монет`} />
+            {/* Маржа — то, что реально заморожено на счёте. Расчётную помечаем
+                «≈»: у биржи в начальную маржу входит комиссия закрытия, и наша
+                оценка её занижает — выдавать оценку за факт нельзя. */}
+            <KV k="Заморожено маржи"
+                v={p.margin
+                  ? `${p.marginFrom === "расчёт" ? "≈ " : ""}${money(p.margin)}`
+                  : "—"} />
             <KV k="Риск на сделку" v={`$${p.risk.toFixed(2)}`} />
             <KV k="Схема выхода" v={p.scheme} />
             <KV k="Безубыток" v={p.be ? `при ${price(p.be)}` : "не переносим"} last />
@@ -240,7 +278,11 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
 
       <AnimatePresence>
         {fullChart && (
-          <FullChart p={p} interval={tf} onInterval={setTf} onClose={() => setFullChart(false)} />
+          <FullChart p={p} interval={tf} onInterval={setTf} onClose={() => setFullChart(false)}
+                     levels={levels} lens={lens} onLens={setLens}
+                     panes={panes} onPanes={setPanes}
+                     pnl={pending ? null : { usd, r }}
+                     onLevel={(kind, value) => setAsk({ kind, price: value })} />
         )}
       </AnimatePresence>
 
@@ -259,6 +301,42 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
           </Press>
         </div>
       </Sheet>
+
+      {/* Подтверждение переноса уровня. Текст РАЗНЫЙ по смыслу действия: у
+          лимитки пересчитается размер, у цели снимутся ступени лесенки. Одна
+          формулировка на все три случая умалчивала бы о главном. */}
+      <Modal open={!!ask} onClose={() => setAsk(null)}>
+        {ask && (
+          <div className="text-center">
+            <h3 className="text-[19px] font-bold">
+              {ask.kind === "entry" ? "Перенести вход" : ask.kind === "sl" ? "Перенести стоп" : "Перенести цель"}
+              {" на "}{price(ask.price)}?
+            </h3>
+            <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
+              {ask.kind === "entry"
+                ? `Лимитка на бирже изменится, а размер пересчитается под прежний риск $${p.risk.toFixed(2)}: расстояние до стопа стало другим.`
+                : ask.kind === "tp"
+                ? "Цель уедет на биржу сразу. Ступени лесенки снимутся — они раскладывались по прежней цели."
+                : "Стоп уедет на биржу сразу. Перенос в безубыток после этого выполняться не будет — вы взяли управление на себя."}
+            </p>
+            <div className="flex gap-2.5 mt-5">
+              <Press onClick={() => setAsk(null)} className="flex-1">
+                <div className="glass glass-flat py-3 text-center text-[16px] font-medium">Отмена</div>
+              </Press>
+              <Press feel="heavy" className="flex-1"
+                     onClick={() => {
+                       if (ask.kind === "entry") moveEntry(p.id, ask.price);
+                       else if (ask.kind === "tp") updateLevels(p.id, ask.price, 0);
+                       else updateLevels(p.id, 0, ask.price);
+                       haptic.ok(); setAsk(null);
+                     }}>
+                <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                     style={{ background: "var(--tint)" }}>Перенести</div>
+              </Press>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={confirm} onClose={() => setConfirm(false)}>
         <div className="text-center">
@@ -288,6 +366,35 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
       </Modal>
     </motion.div>
   );
+}
+
+/**
+ * Уровни сделки для графика.
+ *
+ * Перетаскивать можно ровно то, за чем стоит ЖИВАЯ заявка: у неисполненной
+ * лимитки — вход (сама заявка), у открытой позиции — стоп и первую цель.
+ * Вход открытой позиции двигать нечего: он уже случился. Ступени 2 и 3
+ * лесенки ручек не получают: переставить одну ступень значит пересобрать всю
+ * лесенку, а это другая операция, и делается она схемой выхода.
+ */
+function useLevels(p: Position, pending: boolean): Level[] {
+  return useMemo(() => {
+    const g = cssVar("--green", "#30d158"), r = cssVar("--red", "#ff453a");
+    const gray = cssVar("--label-2", "#8e8e93"), o = cssVar("--orange", "#ff9f0a");
+    const legs = p.tps?.length ? p.tps : [{ price: p.tp, weight: 1 }];
+    const out: Level[] = [
+      { kind: "entry", price: p.entry, title: pending ? "лимитка" : "вход",
+        color: gray, drag: pending },
+    ];
+    legs.filter((l) => l.price > 0).forEach((l, i) => out.push({
+      kind: i === 0 ? "tp" : "leg", price: l.price,
+      title: legs.length > 1 ? `TP${i + 1} ${Math.round(l.weight * 100)}%` : "TP",
+      color: g, drag: i === 0 && !pending,
+    }));
+    out.push({ kind: "sl", price: p.sl, title: "SL", color: r, drag: !pending });
+    if (p.be) out.push({ kind: "be", price: p.be, title: "БУ", color: o });
+    return out;
+  }, [p.entry, p.tp, p.sl, p.be, JSON.stringify(p.tps), pending]);
 }
 
 function Legend({ color, text }: { color: string; text: string }) {
@@ -325,11 +432,21 @@ function NumField({ label, value, onChange, step, tint }: {
 /* ── График на весь экран ────────────────────────────────────────────────────
    Отдельный слой поверх всего, в портрете (альбомная ориентация в приложении не
    поддерживается). Здесь у графика полная навигация TradingView, а экрана под
-   ним нет — значит ни один жест ни с чем не спорит. */
-function FullChart({ p, interval, onInterval, onClose }: {
+   ним нет — значит ни один жест ни с чем не спорит.
+
+   Панели индикаторов живут ИМЕННО ЗДЕСЬ, в полный рост: экран делится на цену
+   сверху и узкие полосы под ней, все на одной оси времени. Смена таймфрейма
+   меняет и панели — иначе столбики стояли бы не под своими свечами. */
+function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
+                     panes, onPanes, pnl, onLevel }: {
   p: Position; interval: Interval; onInterval: (i: Interval) => void; onClose: () => void;
+  levels: Level[]; lens: Lens; onLens: (l: Lens) => void;
+  panes: PaneKind[]; onPanes: (v: PaneKind[]) => void;
+  pnl: { usd: number; r: number } | null;
+  onLevel: (kind: Level["kind"], price: number) => void;
 }) {
   const tk = useTickers([p.symbol])[p.symbol];
+  const [tools, setTools] = useState(false);
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
@@ -344,11 +461,19 @@ function FullChart({ p, interval, onInterval, onClose }: {
           <span className="text-[13px] font-semibold"
                 style={{ color: tk.pct24h >= 0 ? "var(--green)" : "var(--red)" }}>{pct(tk.pct24h)}</span>
         )}
-        <Press onClick={() => { haptic.tap(); onClose(); }} className="ml-auto" scale={0.9}>
-          <span className="flex items-center justify-center w-9 h-9 rounded-full glass glass-flat">
-            <X size={18} />
-          </span>
-        </Press>
+        <span className="ml-auto flex items-center gap-1.5">
+          <LensButton lens={lens} onLens={onLens} />
+          <Press onClick={() => { haptic.tap(); setTools(true); }} scale={0.9}>
+            <span className="flex items-center justify-center w-9 h-9 rounded-full glass glass-flat">
+              <Layers size={16} style={{ color: panes.length ? "var(--lime)" : "var(--label-2)" }} />
+            </span>
+          </Press>
+          <Press onClick={() => { haptic.tap(); onClose(); }} scale={0.9}>
+            <span className="flex items-center justify-center w-9 h-9 rounded-full glass glass-flat">
+              <X size={18} />
+            </span>
+          </Press>
+        </span>
       </div>
 
       <div className="flex gap-1 px-3 py-2">
@@ -362,8 +487,9 @@ function FullChart({ p, interval, onInterval, onClose }: {
         ))}
       </div>
 
-      <div className="flex-1 min-h-0 px-1">
-        <Chart p={p} interval={interval} full />
+      <div className="flex-1 min-h-0 px-1" data-noswipe>
+        <TradeChart symbol={p.symbol} interval={interval} full levels={levels} lens={lens}
+                    panes={panes} pnl={pnl} onLevel={onLevel} />
       </div>
 
       <div className="px-3 pt-1.5 pb-1 flex items-center justify-center flex-wrap gap-x-3.5 gap-y-1 text-[11px]"
@@ -378,151 +504,8 @@ function FullChart({ p, interval, onInterval, onClose }: {
       <div className="px-3 pb-1 text-center text-[10px]" style={{ color: "var(--label-3)" }}>
         щипок — масштаб · тяните ось времени, чтобы сжать свечи · ось цены — растянуть · двойное касание оси — сброс
       </div>
+
+      <PaneSheet open={tools} onClose={() => setTools(false)} panes={panes} onPanes={onPanes} />
     </motion.div>
   );
 }
-
-/* ── Свечной график ──────────────────────────────────────────────────────────
-   lightweight-charts (TradingView, Apache-2.0) на НАСТОЯЩИХ свечах Bybit:
-   история приходит по REST, текущая свеча дорисовывается тиками по WS.
-   Поверх — линии входа, цели, стопа и безубытка: без них график красивый, но
-   не отвечает на единственный вопрос, с которым сюда заходят, — далеко ли до
-   цели и близко ли стоп. */
-function Chart({ p, interval, full = false }: { p: Position; interval: Interval; full?: boolean }) {
-  const box = useRef<HTMLDivElement>(null);
-  const chart = useRef<IChartApi | null>(null);
-  const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const lines = useRef<IPriceLine[]>([]);
-  const legend = useRef<HTMLDivElement>(null);
-  const fitted = useRef(false);
-  const { candles, live, loading, error } = useCandles(p.symbol, interval);
-
-  useEffect(() => {
-    if (!box.current) return;
-    const css = getComputedStyle(document.documentElement);
-    const v = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
-    const green = v("--green", "#30d158"), red = v("--red", "#ff453a");
-
-    const c = createChart(box.current, {
-      // На весь экран график меряет себя сам, встроенный — фиксированной высоты.
-      ...(full ? { autoSize: true } : { height: 240 }),
-      layout: {
-        background: { color: "transparent" }, textColor: v("--label-2", "#8e8e93"),
-        attributionLogo: false, fontFamily: "-apple-system, system-ui, sans-serif",
-      },
-      grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,.06)" } },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.12 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 3 },
-      crosshair: { horzLine: { labelBackgroundColor: v("--tint", "#0a84ff") },
-                   vertLine: { labelBackgroundColor: v("--tint", "#0a84ff") } },
-      /* Навигация зависит от режима, и это не придирка.
-         ВСТРОЕННЫЙ график живёт внутри прокручиваемого экрана: вертикальное
-         перетаскивание и колесо у него отняты, иначе жест вверх вместо
-         прокрутки страницы двигал бы цену, а колесо «проваливалось» бы в
-         график посреди скролла.
-         НА ВЕСЬ ЭКРАН прокручивать нечего — включено всё, как в TradingView:
-         перетаскивание в обе стороны, щипок, колесо, растяжение осей
-         перетаскиванием (ось времени — сжать/растянуть свечи, ось цены —
-         масштаб по вертикали), двойной клик по оси — сброс. Инерция включена
-         в обоих: без неё свайп по котировкам ощущается как рывок. */
-      handleScroll: full
-        ? { horzTouchDrag: true, vertTouchDrag: true, mouseWheel: true, pressedMouseMove: true }
-        : { horzTouchDrag: true, vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true },
-      handleScale: full
-        ? { pinch: true, mouseWheel: true,
-            axisPressedMouseMove: { time: true, price: true },
-            axisDoubleClickReset: { time: true, price: true } }
-        : { pinch: true, mouseWheel: false, axisPressedMouseMove: false, axisDoubleClickReset: true },
-      kineticScroll: { touch: true, mouse: false },
-    });
-    series.current = c.addSeries(CandlestickSeries, {
-      upColor: green, downColor: red, borderVisible: false,
-      wickUpColor: green, wickDownColor: red, priceLineVisible: false,
-    });
-    chart.current = c;
-    fitted.current = false;
-
-    /* Показания под курсором пишем НАПРЯМУЮ в DOM, а не через состояние React:
-       крестик двигается на каждом кадре жеста, и перерисовка экрана на каждое
-       движение пальца — ровно та работа, которой тут быть не должно. */
-    if (full) {
-      c.subscribeCrosshairMove((param) => {
-        const el = legend.current;
-        if (!el) return;
-        const b = param.seriesData.get(series.current!) as any;
-        el.textContent = b
-          ? `O ${price(b.open)}  H ${price(b.high)}  L ${price(b.low)}  C ${price(b.close)}`
-          : "";
-      });
-    }
-
-    // autoSize уже следит за размером — свой наблюдатель нужен только встроенному.
-    const ro = full ? null : new ResizeObserver(() => c.applyOptions({ width: box.current!.clientWidth }));
-    ro?.observe(box.current);
-    return () => { ro?.disconnect(); c.remove(); chart.current = null; series.current = null; lines.current = []; };
-  }, [p.id, interval, full]);
-
-  /* История. Точность оси берём из самой цены: с точностью по умолчанию (2
-     знака) монета за $0.0143 превращается в прямую линию. */
-  useEffect(() => {
-    const s = series.current;
-    if (!s || !candles.length) return;
-    const dec = Math.max(...candles.slice(-40).map((c) => decimalsOf(c.close)), 2);
-    s.applyOptions({ priceFormat: { type: "price", precision: dec, minMove: 10 ** -dec } });
-    s.setData(candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })));
-    if (!fitted.current && chart.current) {
-      // Показываем последние ~70 свечей, а не всю историю: на 200 барах тело
-      // свечи становится волоском.
-      chart.current.timeScale().setVisibleLogicalRange({ from: candles.length - 70, to: candles.length + 3 });
-      fitted.current = true;
-    }
-  }, [candles]);
-
-  /* Незакрытая свеча — одна точка, а не пересборка серии. */
-  useEffect(() => {
-    if (live && series.current) series.current.update({ ...live, time: live.time as UTCTimestamp });
-  }, [live]);
-
-  /* Уровни сделки. Пересоздаём при правке TP/SL — иначе на графике осталась бы
-     старая линия рядом с новой. */
-  useEffect(() => {
-    const s = series.current;
-    if (!s) return;
-    const css = getComputedStyle(document.documentElement);
-    const v = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
-    lines.current.forEach((l) => s.removePriceLine(l));
-    const mk = (price: number, color: string, title: string, dashed = true) =>
-      s.createPriceLine({ price, color, lineWidth: 1, lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
-                          axisLabelVisible: true, title });
-    // Ступеней может быть несколько: у шорта лесенка из трёх. Рисовать одну
-    // цель там, где в стакане стоят три, значит показать треть плана.
-    const legs = p.tps?.length ? p.tps : [{ price: p.tp, weight: 1 }];
-    lines.current = [
-      mk(p.entry, v("--label-2", "#8e8e93"), "вход", false),
-      ...legs.filter((l) => l.price > 0).map((l, i) =>
-        mk(l.price, v("--green", "#30d158"),
-           legs.length > 1 ? `TP${i + 1} ${Math.round(l.weight * 100)}%` : "TP")),
-      mk(p.sl, v("--red", "#ff453a"), "SL"),
-      ...(p.be ? [mk(p.be, v("--orange", "#ff9f0a"), "БУ")] : []),
-    ];
-  }, [p.entry, p.tp, p.tps, p.sl, p.be, candles.length > 0, interval]);
-
-  return (
-    <div className={full ? "relative h-full" : "relative"}>
-      {full && (
-        <div ref={legend}
-             className="absolute left-2 top-1 z-10 text-[11px] tabular-nums pointer-events-none"
-             style={{ color: "var(--label-2)" }} />
-      )}
-      <div ref={box} className={full ? "w-full h-full" : "w-full"}
-           style={full ? undefined : { minHeight: 240 }} />
-      {(loading || error) && (
-        <div className="absolute inset-0 flex items-center justify-center text-[13px]"
-             style={{ color: "var(--label-2)" }}>
-          {error ? "Свечи недоступны — биржа не ответила" : "Загружаем свечи…"}
-        </div>
-      )}
-    </div>
-  );
-}
-

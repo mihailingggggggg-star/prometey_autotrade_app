@@ -65,6 +65,21 @@ export async function fetchCandles(symbol: string, interval: Interval, limit = 2
     .reverse();
 }
 
+/** Свечи ЗА ОТРЕЗОК — для закрытой сделки: её окно давно уехало от «последних
+ *  200 свечей», и без границ график показывал бы сегодняшний рынок вместо той
+ *  сделки, которую открыли посмотреть. */
+export async function fetchRange(symbol: string, interval: Interval,
+                                 startMs: number, endMs: number): Promise<Candle[]> {
+  const r = await api(`/v5/market/kline?category=linear&symbol=${symbol}&interval=${interval}`
+    + `&start=${Math.floor(startMs)}&end=${Math.ceil(endMs)}&limit=1000`);
+  return (r.list as string[][])
+    .map((k) => ({
+      time: Math.floor(+k[0] / 1000),
+      open: +k[1], high: +k[2], low: +k[3], close: +k[4],
+    }))
+    .reverse();
+}
+
 export async function fetchTicker(symbol: string): Promise<Ticker | null> {
   const r = await api(`/v5/market/tickers?category=linear&symbol=${symbol}`);
   const t = r.list?.[0];

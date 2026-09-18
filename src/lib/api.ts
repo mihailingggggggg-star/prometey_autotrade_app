@@ -104,6 +104,10 @@ export type ApiPosition = {
   tp: number; tps: { price: number; weight: number }[];
   be: number | null; beMoved: boolean;
   size: number; risk: number; openedAt: number; scheme: string;
+  /** Размер В ДОЛЛАРАХ по текущей цене и замороженная маржа. `marginFrom`
+   *  говорит, маржа с биржи или посчитана нами: в биржевую входит комиссия
+   *  закрытия, и наш расчёт её занижает — выдавать оценку за факт нельзя. */
+  notional: number; margin: number; marginFrom: string;
   status: "pending" | "open"; entryType: "market" | "limit";
   score: number; whale: boolean; upl?: number;
 };
@@ -235,6 +239,12 @@ export const closePosition = (id: string) =>
 
 export const setLevels = (id: string, tp: number, sl: number) =>
   post<{ ok: boolean; message: string }>("/api/position/levels", { id, tp, sl });
+
+/** Перенести цену НЕИСПОЛНЕННОЙ лимитки. Размер на сервере пересчитывается:
+ *  риск — якорь системы, и перенос входа ближе к стопу иначе молча уменьшил бы
+ *  риск сделки при неизменной надписи. */
+export const moveEntry = (id: string, entry: number) =>
+  post<{ ok: boolean; message: string }>("/api/position/entry", { id, entry });
 
 export const closeAll = () =>
   post<{ closed: number; failed: number }>("/api/positions/close_all", {});

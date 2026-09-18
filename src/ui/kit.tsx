@@ -206,3 +206,10 @@ export function Aurora() {
     </div>
   );
 }
+
+/** Значение CSS-переменной темы РЕАЛЬНЫМ цветом. Нужно всему, что рисуется не
+ *  в CSS: canvas графика понимает «#30d158», но не «var(--green)». */
+export function cssVar(name: string, fallback: string): string {
+  if (typeof document === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}

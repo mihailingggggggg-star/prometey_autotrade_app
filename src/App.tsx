@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { TabBar, type Tab } from "./nav/TabBar";
+import { TabBar, TABS_ORDER, type Tab } from "./nav/TabBar";
 import { useApp } from "./lib/store";
 import { Auth } from "./screens/Auth";
 import { Onboarding } from "./screens/Onboarding";
@@ -13,14 +13,27 @@ import { Lock, useLock } from "./screens/Lock";
 import { WebLogin } from "./screens/WebLogin";
 import { BioOffer } from "./screens/BioOffer";
 import { hasSession } from "./lib/api";
+import { useSwipe } from "./lib/swipe";
 import { inTelegram } from "./lib/tg";
 import { Modal, Press } from "./ui/kit";
+import { haptic } from "./lib/tg";
 import { TriangleAlert } from "lucide-react";
 
 export function App() {
   const { stage, setStage, positions, blocked, link, registered, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>("home");
   const lock = useLock();
+
+  /* Свайп листает вкладки по тому же порядку, в котором они стоят в панели:
+     жест и панель обязаны говорить одно и то же, иначе свайп ощущается
+     случайным. Места, где горизонтальный жест принадлежит содержимому
+     (график, ряды с прокруткой), помечены data-noswipe и жест не перехватывают. */
+  const step = (d: number) => {
+    const i = TABS_ORDER.indexOf(tab);
+    const next = TABS_ORDER[Math.min(TABS_ORDER.length - 1, Math.max(0, i + d))];
+    if (next !== tab) { haptic.select(); setTab(next); }
+  };
+  const swipe = useSwipe({ onLeft: () => step(1), onRight: () => step(-1) });
 
   /* Регистрация считается пройденной, когда ПОДТВЕРЖДЁН НОМЕР — а не когда
      бот узнал нас по подписи. Подпись говорит лишь «это тот же Telegram-
@@ -50,9 +63,9 @@ export function App() {
 
       {!lock.locked && (inTelegram || hasSession()) && stage !== "auth" && (
         <>
-          <main className="relative z-10 h-full scroll"
+          <main className="relative z-10 h-full scroll" {...swipe}
                 style={{ paddingTop: "var(--safe-t)",
-                         paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 18px)" }}>
+                         paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 26px)" }}>
             <AnimatePresence mode="wait">
               <motion.div key={tab}
                 initial={{ opacity: 0, y: 10, scale: 0.995 }}

@@ -49,6 +49,8 @@ type Ctx = {
   closePosition: (id: string) => void;
   closeAllPositions: () => void;
   updateLevels: (id: string, tp: number, sl: number) => void;
+  /** Перенести цену неисполненной лимитки (у открытой позиции входа уже нет). */
+  moveEntry: (id: string, entry: number) => void;
   feed: Feed;               // связь с рынком: live / connecting / offline
   marketReady: boolean;     // пришла ли настоящая цена хотя бы по одной монете
   mode: "demo" | "live";    // счёт бота: демо или реальные деньги
@@ -93,7 +95,12 @@ function toPosition(p: ApiPosition, mark: number): M.Position {
     entry: p.entry, mark: mark || p.mark || p.entry,
     sl: p.sl, tp: p.tp, tps: p.tps, be: p.be ?? undefined,
     size: p.size, risk: p.risk, openedAt: p.openedAt, scheme: p.scheme,
-    status: p.status,
+    status: p.status, entryType: p.entryType, upl: p.upl,
+    /* Номинал пересчитываем по ЖИВОЙ цене из потока Bybit: серверный считался
+       на момент опроса, а цена с тех пор ушла. Маржа — как пришла: она
+       заморожена на бирже и от тика не меняется. */
+    notional: (p.size || 0) * (mark || p.mark || p.entry) || p.notional,
+    margin: p.margin, marginFrom: p.marginFrom,
   };
 }
 
@@ -121,6 +128,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [api, setApi] = useState({ connected: true, key: "kQ7f••••••••••••3xZa", secret: "••••••••••••••••" });
   const [closed, setClosed] = useState<string[]>([]);
   const [overrides, setOverrides] = useState<Record<string, { tp: number; sl: number }>>({});
+  const [entries, setEntries] = useState<Record<string, number>>({});
   const server = useServer();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -199,9 +207,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const base = M.buildPosition(x, anchors[x.id] || x.fallback);
       const mark = ticks[x.symbol]?.last || base.mark;
       const ov = overrides[x.id];
-      return { ...base, mark, ...(ov ? { tp: ov.tp, sl: ov.sl } : {}) };
+      const notional = base.size * mark;
+      return { ...base, mark, notional, margin: notional / base.lev, marginFrom: "расчёт",
+               ...(entries[x.id] ? { entry: entries[x.id] } : {}),
+               ...(ov ? { tp: ov.tp, sl: ov.sl } : {}) };
     });
-  }, [demo, server.positions, specs, anchors, ticks, overrides]);
+  }, [demo, server.positions, specs, anchors, ticks, overrides, entries]);
 
   const trades = useMemo(
     () => (demo ? M.trades : server.trades.map(toTrade)), [demo, server.trades]);
@@ -333,6 +344,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     updateLevels: (id, tp, sl) => {
       if (demo) return void setOverrides((o) => ({ ...o, [id]: { tp, sl } }));
       void act("levels:" + id, () => API.setLevels(id, tp, sl));
+    },
+    /* Перенос входа — ТОЛЬКО у лимитки, и только через сервер: там пересчитается
+       размер под прежний риск и проверится, что ордер не пересёк рынок. */
+    moveEntry: (id, entry) => {
+      if (demo) return void setEntries((o) => ({ ...o, [id]: entry }));
+      void act("entry:" + id, () => API.moveEntry(id, entry));
     },
     trades, signals, payments, riskAlert,
   };
