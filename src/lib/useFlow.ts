@@ -7,44 +7,71 @@
  * телефон и жечь трафик впустую.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Candle, Interval } from "./market";
-import { bucket, fetchOi, fetchRecentTrades, newPositions, onLiquidations, onTrades,
-         stepOf, whaleFloor, type FlowBar, type Liq, type OiPoint, type Trade } from "./flow";
+import { useEffect, useRef, useState } from "react";
+import type { Interval } from "./market";
+import { bucket, fetchRecentTrades, onLiquidations, onTrades,
+         stepOf, whaleFloor, type Liq, type Trade } from "./flow";
+import { openInterest, volume, type Ex, type OhlcPoint, type VolBar } from "./agg";
 
 /** Сколько живых сделок держим в памяти. Больше незачем: кружки китов на
  *  графике всё равно рисуются только за видимое окно. */
 const KEEP_WHALES = 60;
 
-/* ── Открытый интерес и «новые позиции» ─────────────────────────────────── */
+/* ── Открытый интерес: свечами и с двух бирж ─────────────────────────────── */
 
-export function useOi(symbol: string, interval: Interval, candles: Candle[], on: boolean) {
-  const [oi, setOi] = useState<OiPoint[]>([]);
-  const [error, setError] = useState(false);
+export type OiData = {
+  total: OhlcPoint[]; longs: OhlcPoint[]; shorts: OhlcPoint[];
+  /** Что реально ответило. Пустой список — данных нет вовсе. */
+  from: Ex[];
+  loading: boolean;
+};
+
+export function useOi(symbol: string, interval: Interval, on: boolean): OiData {
+  const [d, setD] = useState<OiData>({ total: [], longs: [], shorts: [], from: [], loading: false });
 
   useEffect(() => {
-    if (!on) { setOi([]); return; }
+    if (!on) { setD({ total: [], longs: [], shorts: [], from: [], loading: false }); return; }
     let alive = true;
-    setError(false);
-    fetchOi(symbol, interval).then((r) => alive && setOi(r)).catch(() => alive && setError(true));
-    /* Перезапрашиваем на шаге свечи: ОИ меняется непрерывно, но точка ряда
-       появляется раз в интервал — чаще опрашивать нечего. */
-    const t = setInterval(() => {
-      fetchOi(symbol, interval, 50).then((r) => alive && setOi((prev) => merge(prev, r)))
-        .catch(() => {});
-    }, Math.min(stepOf(interval), 300) * 1000);
+    setD((p) => ({ ...p, loading: true }));
+    const load = () => openInterest(symbol, interval)
+      .then((r) => alive && setD({ total: r.total.rows, longs: r.longs.rows, shorts: r.shorts.rows,
+                                   from: r.total.from, loading: false }))
+      .catch(() => alive && setD({ total: [], longs: [], shorts: [], from: [], loading: false }));
+    load();
+    /* Перезапрашиваем не чаще, чем появляется новая точка ряда, и не реже раза
+       в пять минут: открытый интерес меняется непрерывно, но в ряд попадает
+       шагом периода — чаще спрашивать нечего, а два лишних запроса в минуту на
+       мобильной сети заметны. */
+    const t = setInterval(load, Math.min(stepOf(interval), 300) * 1000);
     return () => { alive = false; clearInterval(t); };
   }, [symbol, interval, on]);
 
-  const flow = useMemo<FlowBar[]>(
-    () => (oi.length && candles.length ? newPositions(oi, candles) : []), [oi, candles]);
-  return { oi, flow, error };
+  return d;
 }
 
-function merge(prev: OiPoint[], next: OiPoint[]): OiPoint[] {
-  const m = new Map(prev.map((p) => [p.time, p]));
-  next.forEach((p) => m.set(p.time, p));
-  return [...m.values()].sort((a, b) => a.time - b.time);
+/** Приток: насколько за свечу прибавилось лонгов и шортов. Раньше это была
+ *  догадка по ΔОИ и направлению свечи; теперь у нас есть сами ряды лонгов и
+ *  шортов, и приток — их прямая разность. Оценкой это быть не перестало (сами
+ *  ряды оценочные), но гадать о направлении больше не нужно. */
+export function deltas(rows: OhlcPoint[]): { time: number; value: number }[] {
+  const out: { time: number; value: number }[] = [];
+  for (let i = 1; i < rows.length; i++) out.push({ time: rows[i].time, value: rows[i].close - rows[i - 1].close });
+  return out;
+}
+
+/* ── Объём с двух бирж ───────────────────────────────────────────────────── */
+
+export function useVolume(symbol: string, interval: Interval, on: boolean) {
+  const [d, setD] = useState<{ rows: VolBar[]; from: Ex[] }>({ rows: [], from: [] });
+  useEffect(() => {
+    if (!on) { setD({ rows: [], from: [] }); return; }
+    let alive = true;
+    const load = () => volume(symbol, interval).then((r) => alive && setD(r)).catch(() => {});
+    load();
+    const t = setInterval(load, Math.min(stepOf(interval), 120) * 1000);
+    return () => { alive = false; clearInterval(t); };
+  }, [symbol, interval, on]);
+  return d;
 }
 
 /* ── Крупные сделки («входы китов») ─────────────────────────────────────── */
@@ -65,12 +92,22 @@ export function useWhales(symbol: string, on: boolean) {
       setList(seed.filter((t) => t.usd >= floor.current).slice(-KEEP_WHALES));
     }).catch(() => {});
 
+    /* Копим в ref и выкладываем в состояние два раза в секунду. На живой
+       монете лента даёт десятки сообщений в секунду, и рендер на каждое — это
+       те самые микрофризы: экран перерисовывается чаще, чем человек способен
+       заметить, ради данных, которые всё равно видны кружками. */
+    let buf: Trade[] = [];
     const off = onTrades(symbol, (batch) => {
       if (!floor.current) return;
       const big = batch.filter((t) => t.usd >= floor.current);
-      if (big.length) setList((prev) => [...prev, ...big].slice(-KEEP_WHALES));
+      if (big.length) buf = [...buf, ...big].slice(-KEEP_WHALES);
     });
-    return () => { alive = false; off(); };
+    const flush = setInterval(() => {
+      if (!buf.length) return;
+      const add = buf; buf = [];
+      setList((prev) => [...prev, ...add].slice(-KEEP_WHALES));
+    }, 500);
+    return () => { alive = false; off(); clearInterval(flush); };
   }, [symbol, on]);
 
   return { whales: list, floor: floor.current };
@@ -99,17 +136,24 @@ export function useCvd(symbol: string, interval: Interval, on: boolean) {
         delta.current.set(b, (delta.current.get(b) || 0) + (t.buy ? t.usd : -t.usd));
       });
       if (!since.current && batch.length) since.current = batch[0].time;
-      // Кумулятив собираем на каждом обновлении: ряд короткий (десятки точек),
-      // а инкрементальный пересчёт на нём стоил бы больше, чем экономил.
-      const times = [...delta.current.keys()].sort((a, b) => a - b);
-      let sum = 0;
-      const out = times.map((tm) => { sum += delta.current.get(tm) || 0; return { time: tm, value: sum }; });
-      if (alive) setBars(out);
+      dirty = true;
     };
 
-    fetchRecentTrades(symbol).then((seed) => alive && add(seed)).catch(() => {});
+    /* Пересобираем ряд ДВА РАЗА В СЕКУНДУ, а не на каждую сделку. Лента живой
+       монеты — десятки сообщений в секунду, и каждое тянуло за собой пересчёт
+       кумулятива, рендер и setData графику. Это и есть микрофризы. */
+    let dirty = false;
+    const flush = setInterval(() => {
+      if (!dirty || !alive) return;
+      dirty = false;
+      const times = [...delta.current.keys()].sort((a, b) => a - b);
+      let sum = 0;
+      setBars(times.map((tm) => { sum += delta.current.get(tm) || 0; return { time: tm, value: sum }; }));
+    }, 500);
+
+    fetchRecentTrades(symbol).then((seed) => { if (alive) { add(seed); } }).catch(() => {});
     const off = onTrades(symbol, add);
-    return () => { alive = false; off(); };
+    return () => { alive = false; off(); clearInterval(flush); };
   }, [symbol, interval, on]);
 
   return { bars, since: since.current };
@@ -128,6 +172,7 @@ export function useLiqs(symbol: string, interval: Interval, on: boolean) {
   useEffect(() => {
     if (!on) { setBars([]); acc.current = new Map(); setLast(null); return; }
     acc.current = new Map();
+    let dirty = false, tail: Liq | null = null;
     const off = onLiquidations(symbol, (batch) => {
       batch.forEach((l) => {
         const b = bucket(l.time * 1000, interval);
@@ -135,10 +180,18 @@ export function useLiqs(symbol: string, interval: Interval, on: boolean) {
         if (l.long) cur.longs += l.usd; else cur.shorts += l.usd;
         acc.current.set(b, cur);
       });
-      setBars([...acc.current.values()].sort((a, b) => a.time - b.time));
-      setLast(batch[batch.length - 1] || null);
+      tail = batch[batch.length - 1] || tail;
+      dirty = true;
     });
-    return () => off();
+    // Каскад ликвидаций — это сотни событий за секунды, ровно в тот момент,
+    // когда на график смотрят. Выкладываем их пачкой два раза в секунду.
+    const flush = setInterval(() => {
+      if (!dirty) return;
+      dirty = false;
+      setBars([...acc.current.values()].sort((a, b) => a.time - b.time));
+      setLast(tail);
+    }, 500);
+    return () => { off(); clearInterval(flush); };
   }, [symbol, interval, on]);
 
   return { bars, last };

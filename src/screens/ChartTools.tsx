@@ -14,7 +14,7 @@
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Check, Eye, Plus, Sparkles } from "lucide-react";
 import { Glass, Press, Sheet, Toggle } from "../ui/kit";
-import { PANES, PANES_DEFAULT, type Lens, type PaneKind } from "../ui/TradeChart";
+import { LENS_OFF, PANES, PANES_DEFAULT, type Lens, type PaneKind } from "../ui/TradeChart";
 import { haptic } from "../lib/tg";
 
 const LENS_KEY = "prometey.chart.lens";
@@ -23,8 +23,9 @@ const PANE_KEY = "prometey.chart.panes";
 export function readLens(): Lens {
   try {
     const v = JSON.parse(localStorage.getItem(LENS_KEY) || "{}");
-    return { ema50: !!v.ema50, ema200: !!v.ema200, whales: !!v.whales };
-  } catch { return { ema50: false, ema200: false, whales: false }; }
+    return { ema50: !!v.ema50, ema200: !!v.ema200, whales: !!v.whales,
+             volume: !!v.volume, liquidity: !!v.liquidity };
+  } catch { return LENS_OFF; }
 }
 export function saveLens(l: Lens) {
   try { localStorage.setItem(LENS_KEY, JSON.stringify(l)); } catch { /* приватное окно */ }
@@ -43,7 +44,7 @@ export function savePanes(p: PaneKind[]) {
 
 export function LensButton({ lens, onLens }: { lens: Lens; onLens: (l: Lens) => void }) {
   const [open, setOpen] = useState(false);
-  const n = Number(lens.ema50) + Number(lens.ema200) + Number(lens.whales);
+  const n = Object.values(lens).filter(Boolean).length;
   return (
     <>
       <Press onClick={() => { haptic.tap(); setOpen(true); }} scale={0.9}>
@@ -66,13 +67,27 @@ export function LensButton({ lens, onLens }: { lens: Lens; onLens: (l: Lens) => 
                      dot="#0a84ff" on={lens.ema200}
                      onChange={(v) => onLens({ ...lens, ema200: v })} />
             <LensRow label="Входы китов" note="крупные сделки прямо сейчас, кружком с объёмом"
-                     dot="var(--lime)" on={lens.whales}
-                     onChange={(v) => onLens({ ...lens, whales: v })} last />
+                     dot="var(--tint)" on={lens.whales}
+                     onChange={(v) => onLens({ ...lens, whales: v })} />
+            <LensRow label="Объёмы" note="оборот двух бирж вместе, столбиками под ценой"
+                     dot="rgba(160,160,170,.7)" on={lens.volume}
+                     onChange={(v) => onLens({ ...lens, volume: v })} />
+            <LensRow label="Карта ликвидности" note="где вынесет лонги и шорты · оценка по плечам и объёму"
+                     dot="var(--orange)" on={lens.liquidity}
+                     onChange={(v) => onLens({ ...lens, liquidity: v })} last />
           </Glass>
           <p className="text-[12px] leading-snug px-1" style={{ color: "var(--label-2)" }}>
-            «Крупная» считается не константой, а по самой монете: медиана её
-            ленты, умноженная на 25. $50 000 на биткоине — рутина, а на мелкой
+            «Крупная» сделка считается не константой, а по самой монете: медиана
+            её ленты, умноженная на 25. $50 000 на биткоине — рутина, а на мелкой
             монете — событие, и один порог на всех врал бы в обе стороны.
+          </p>
+          <p className="text-[12px] leading-snug px-1" style={{ color: "var(--label-2)" }}>
+            Карта ликвидности — <b>оценка</b>, и другой не бывает: где чьи
+            ликвидации, не публикует ни одна биржа. Считаем так же, как это
+            делают терминалы: по какой цене шли объёмы и на каком плече такие
+            позиции вынесет. Уровень, который цена уже прошла, с карты уходит —
+            там позиции вынесены, и рисовать их значило бы показывать то, чего
+            больше нет.
           </p>
         </div>
       </Sheet>

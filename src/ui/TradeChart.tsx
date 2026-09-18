@@ -21,26 +21,35 @@ import { GripHorizontal } from "lucide-react";
 import { useCandles } from "../lib/useMarket";
 import { decimalsOf, type Candle, type Interval } from "../lib/market";
 import { ema, type Trade as FlowTrade } from "../lib/flow";
-import { useCvd, useLiqs, useOi, useWhales } from "../lib/useFlow";
+import { deltas, useCvd, useLiqs, useOi, useVolume, useWhales } from "../lib/useFlow";
+import { liquidityMap, heatColor, HEAT_FLOOR } from "../lib/liquidity";
 import { money, price as fmtPrice } from "../lib/format";
 
 /* ── Что можно показать ─────────────────────────────────────────────────── */
 
-export type PaneKind = "oi" | "flow" | "cvd" | "liq";
+export type PaneKind = "longs" | "shorts" | "oi" | "flow" | "cvd" | "liq";
 
 export const PANES: { id: PaneKind; label: string; note: string; live?: boolean }[] = [
-  { id: "oi",   label: "Открытый интерес", note: "сколько денег стоит в позициях" },
-  { id: "flow", label: "Новые лонги / шорты", note: "оценка по ΔОИ и направлению свечи" },
-  { id: "cvd",  label: "СВД", note: "кто агрессивнее: покупатели или продавцы", live: true },
-  { id: "liq",  label: "Ликвидации", note: "кого вынесло по рынку", live: true },
+  { id: "longs",  label: "Лонги (ОИ)", note: "сколько денег стоит в лонгах · свечами, две биржи" },
+  { id: "shorts", label: "Шорты (ОИ)", note: "сколько денег стоит в шортах · свечами, две биржи" },
+  { id: "flow",   label: "Приток лонгов / шортов", note: "насколько прибавилось за свечу" },
+  { id: "cvd",    label: "СВД", note: "кто агрессивнее: покупатели или продавцы", live: true },
+  { id: "liq",    label: "Ликвидации", note: "кого вынесло по рынку", live: true },
+  { id: "oi",     label: "Открытый интерес", note: "лонги и шорты вместе · свечами, две биржи" },
 ];
 
-/** Рекомендованный набор — тот, о котором просил владелец: ОИ, СВД, новые
- *  позиции и ликвидации. Порядок не случаен: сверху то, у чего есть история. */
-export const PANES_DEFAULT: PaneKind[] = ["oi", "flow", "cvd", "liq"];
+/** Рекомендованный набор — тот, о котором просил владелец. Порядок не
+ *  случаен: сверху стороны рынка, потом их приток, внизу то, что идёт только
+ *  потоком и начинается с момента открытия. */
+export const PANES_DEFAULT: PaneKind[] = ["longs", "shorts", "flow", "cvd", "liq"];
 
-export type Lens = { ema50: boolean; ema200: boolean; whales: boolean };
-export const LENS_OFF: Lens = { ema50: false, ema200: false, whales: false };
+export type Lens = {
+  ema50: boolean; ema200: boolean; whales: boolean;
+  volume: boolean; liquidity: boolean;
+};
+export const LENS_OFF: Lens = {
+  ema50: false, ema200: false, whales: false, volume: false, liquidity: false,
+};
 
 export type Level = {
   kind: "entry" | "tp" | "sl" | "be" | "leg";
@@ -87,6 +96,7 @@ export function TradeChart({
   const emas = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const paneSeries = useRef<Map<string, ISeriesApi<"Histogram" | "Line">>>(new Map());
   const legend = useRef<HTMLDivElement>(null);
+  const heatBox = useRef<HTMLCanvasElement>(null);
   const fitted = useRef(false);
   const drag = useRef<{ kind: Level["kind"]; price: number } | null>(null);
   const [dragging, setDragging] = useState<{ kind: Level["kind"]; price: number } | null>(null);
@@ -102,11 +112,19 @@ export function TradeChart({
   const loading = fixed ? false : feed.loading;
   const error = fixed ? false : feed.error;
 
-  const wantOi = panes.includes("oi") || panes.includes("flow");
-  const oi = useOi(symbol, interval, candles, wantOi);
+  const wantOi = panes.includes("oi") || panes.includes("flow")
+    || panes.includes("longs") || panes.includes("shorts");
+  const oi = useOi(symbol, interval, wantOi);
   const cvd = useCvd(symbol, interval, panes.includes("cvd"));
   const liq = useLiqs(symbol, interval, panes.includes("liq"));
+  const vol = useVolume(symbol, interval, Boolean(lens.volume));
   const { whales } = useWhales(symbol, Boolean(lens.whales));
+  /* Карта ликвидности — чистый расчёт по свечам, без сети. Memo обязателен:
+     пересчитывать её на каждый тик цены значит перебирать историю по десять
+     раз в секунду ради картинки, которая меняется раз в свечу. */
+  const heat = useMemo(
+    () => (lens.liquidity ? liquidityMap(candles) : []),
+    [lens.liquidity, candles.length, candles[candles.length - 1]?.close]);
 
   const dec = useMemo(
     () => (candles.length ? Math.max(...candles.slice(-40).map((c) => decimalsOf(c.close)), 2) : 2),
@@ -207,11 +225,17 @@ export function TradeChart({
       const mk = (key: string, make: () => ISeriesApi<"Histogram" | "Line">) => {
         if (!paneSeries.current.has(key)) paneSeries.current.set(key, make());
       };
-      if (kind === "oi") {
-        mk("oi", () => c.addSeries(LineSeries, {
-          color: v("--tint", "#0a84ff"), lineWidth: 2, priceLineVisible: false,
-          priceFormat: { type: "volume" },
-        }, idx));
+      if (kind === "longs" || kind === "shorts" || kind === "oi") {
+        /* СВЕЧАМИ, а не линией: у открытого интереса внутри свечи есть свой ход,
+           и именно он показывает, набирали позицию плавно или вынесли рывком.
+           Линия этот рывок прячет — остаётся одна точка закрытия. */
+        const col = kind === "longs" ? green : kind === "shorts" ? red : v("--tint", "#f0293f");
+        const dim = kind === "longs" ? "#1d7a3a" : kind === "shorts" ? "#8f2018" : "#7a1420";
+        mk(kind, () => c.addSeries(CandlestickSeries, {
+          upColor: col, downColor: dim, borderVisible: false,
+          wickUpColor: col, wickDownColor: dim,
+          priceLineVisible: false, priceFormat: { type: "volume" },
+        }, idx) as unknown as ISeriesApi<"Histogram" | "Line">);
       } else if (kind === "flow") {
         mk("flow:l", () => c.addSeries(HistogramSeries, {
           color: green, priceFormat: { type: "volume" }, priceLineVisible: false }, idx));
@@ -331,18 +355,25 @@ export function TradeChart({
     return () => api.setMarkers([]);
   }, [JSON.stringify(marks), candles.length > 0]);
 
-  /* ── Панели ───────────────────────────────────────────────────────────── */
+  /* ── Данные панелей ───────────────────────────────────────────────────── */
   useEffect(() => {
-    const s = paneSeries.current.get("oi");
-    if (s && oi.oi.length) {
-      s.setData(oi.oi.map((p) => ({ time: p.time as UTCTimestamp, value: p.oi })));
+    const put = (key: string, rows: { time: number }[]) => {
+      const sr = paneSeries.current.get(key);
+      if (sr && rows.length) sr.setData(rows.map((r) => ({ ...r, time: r.time as UTCTimestamp })) as any);
+    };
+    put("longs", oi.longs);
+    put("shorts", oi.shorts);
+    put("oi", oi.total);
+
+    /* Приток: прибавку лонгов рисуем вверх, прибавку шортов — вниз. Отток тоже
+       виден: у лонгов он уходит вниз, у шортов вверх — то есть столбик всегда
+       читается как «чья сторона выросла». */
+    const dl = paneSeries.current.get("flow:l"), ds = paneSeries.current.get("flow:s");
+    if (dl && ds) {
+      dl.setData(deltas(oi.longs).map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+      ds.setData(deltas(oi.shorts).map((d) => ({ time: d.time as UTCTimestamp, value: -d.value })));
     }
-    const l = paneSeries.current.get("flow:l"), sh = paneSeries.current.get("flow:s");
-    if (l && sh && oi.flow.length) {
-      l.setData(oi.flow.map((b) => ({ time: b.time as UTCTimestamp, value: b.longs })));
-      sh.setData(oi.flow.map((b) => ({ time: b.time as UTCTimestamp, value: -b.shorts })));
-    }
-  }, [oi.oi, oi.flow]);
+  }, [oi.longs, oi.shorts, oi.total]);
 
   useEffect(() => {
     const s = paneSeries.current.get("cvd");
@@ -357,22 +388,83 @@ export function TradeChart({
     }
   }, [liq.bars]);
 
+  /* ── Объём под ценой ────────────────────────────────────────────────────
+     Гистограмма НА ПАНЕЛИ ЦЕНЫ, но на своей шкале (priceScaleId) и прижата к
+     низу: объём должен читаться вместе со свечой, а не отбирать у неё высоту
+     отдельной панелью. Серый — потому что цвет тут ничего не кодирует, а
+     зелёно-красный спорил бы со свечами. */
+  useEffect(() => {
+    const c = chart.current;
+    if (!c) return;
+    const has = paneSeries.current.get("vol");
+    if (!lens.volume) {
+      if (has) { try { c.removeSeries(has); } catch { /* уже снята */ } paneSeries.current.delete("vol"); }
+      return;
+    }
+    let sr = has;
+    if (!sr) {
+      sr = c.addSeries(HistogramSeries, {
+        color: "rgba(160,160,170,.42)", priceFormat: { type: "volume" },
+        priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false,
+      }, 0);
+      c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+      paneSeries.current.set("vol", sr);
+    }
+    if (vol.rows.length) {
+      sr.setData(vol.rows.map((b) => ({ time: b.time as UTCTimestamp, value: b.usd })));
+    }
+  }, [lens.volume, vol.rows]);
+
   /* ── Накладка: положения значков ──────────────────────────────────────────
      Считаем в одном месте и дёргаем на изменение окна, на новых данных и
      низкочастотным таймером. Через состояние React это делать нельзя: окно
      меняется на каждом кадре жеста, и перерисовка экрана сорок раз в секунду —
      ровно та работа, которой тут быть не должно. */
   const [tick, setTick] = useState(0);
+  /* Тик нужен ТОЛЬКО тем, кто рисуется поверх графика. Нет ни взятого уровня,
+     ни значка PnL, ни кружков, ни карты — нет и перерисовок: раньше экран
+     обновлялся четыре раза в секунду всегда, даже когда поверх графика не было
+     ничего. Это и были микрофризы на слабом телефоне. */
+  const needTick = Boolean(armed || pnl || lens.whales || lens.liquidity || marks.length);
   useEffect(() => {
     const c = chart.current;
-    if (!c) return;
+    if (!c || !needTick) return;
     const bump = () => setTick((t) => (t + 1) % 1e6);
     const un = c.timeScale().subscribeVisibleLogicalRangeChange(bump);
-    const iv = setInterval(bump, 250);
+    const iv = setInterval(bump, 400);
     return () => { clearInterval(iv); c.timeScale().unsubscribeVisibleLogicalRangeChange(un as any); };
-  }, [symbol, interval, full, panes.join(",")]);
+  }, [symbol, interval, full, panes.join(","), needTick]);
 
   const sync = () => setTick((t) => (t + 1) % 1e6);
+
+  /* Рисуем карту при каждом изменении окна: полосы привязаны к ЦЕНЕ, а не к
+     пикселям, и при сдвиге шкалы обязаны ехать вместе с ней. */
+  useEffect(() => {
+    const cv = heatBox.current, host = box.current;
+    if (!cv || !host || !lens.liquidity) return;
+    const gg = geom();
+    if (!gg || !heat.length) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = host.clientWidth, hh = host.clientHeight;
+    if (cv.width !== w * dpr || cv.height !== hh * dpr) {
+      cv.width = w * dpr; cv.height = hh * dpr;
+    }
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hh);
+    const stepPx = heat.length > 1
+      ? Math.abs((gg.y(heat[1].price) || 0) - (gg.y(heat[0].price) || 0)) : 4;
+    heat.forEach((l) => {
+      if (l.long + l.short < HEAT_FLOOR) return;
+      const y = gg.y(l.price);
+      // Полосу за пределами панели цены не рисуем: она попала бы в панель
+      // индикатора, где никакой цены нет.
+      if (y == null || y < gg.main.top || y > gg.main.bottom) return;
+      ctx.fillStyle = heatColor(l.long, l.short);
+      ctx.fillRect(0, y - stepPx / 2, w, Math.max(1.5, stepPx));
+    });
+  }, [heat, tick, lens.liquidity, full, height, panes.join(",")]);
 
   /* Тап ловит САМ ГРАФИК (subscribeClick), а не прозрачная полоса поверх него.
      Полоса перехватывала бы и протяжку времени на высоте линии — то есть
@@ -487,6 +579,14 @@ export function TradeChart({
       {/* Накладка. pointer-events по умолчанию нет: она не должна перехватывать
           жесты графика — только собственные ручки их получают. */}
       <div ref={over} className="absolute inset-0 z-10 pointer-events-none overflow-hidden">
+        {/* Карта ликвидности — канвасом, а не сотней div-ов: девяносто полос в
+            DOM пересчитывались бы вёрсткой на каждом жесте. */}
+        {/* screen: тёмные полосы исчезают сами, светлые только подсвечивают —
+            свечи под картой остаются читаемыми. */}
+        {lens.liquidity && (
+          <canvas ref={heatBox} className="absolute inset-0 w-full h-full"
+                  style={{ mixBlendMode: "screen" }} />
+        )}
         {/* Крупные сделки: кружок-линза с объёмом. */}
         {lens.whales && g && whales.map((w, i) => <Whale key={`${w.time}-${i}`} w={w} g={g} />)}
 
@@ -523,13 +623,23 @@ export function TradeChart({
           const p = PANES.find((x) => x.id === kind)!;
           const empty = (kind === "cvd" && !cvd.bars.length)
             || (kind === "liq" && !liq.bars.length)
-            || (kind === "oi" && !oi.oi.length)
-            || (kind === "flow" && !oi.flow.length);
+            || (kind === "oi" && !oi.total.length)
+            || (kind === "longs" && !oi.longs.length)
+            || (kind === "shorts" && !oi.shorts.length)
+            || (kind === "flow" && oi.longs.length < 2);
           return (
             <div key={kind}>
               <div className="absolute left-1.5 text-[9px] font-semibold uppercase tracking-wide"
                    style={{ top: r.top + 2, color: "var(--label-3)" }}>
                 {p.label}
+                {/* С КАКИХ БИРЖ. Если Binance не ответил (в части стран он
+                    отдаёт отказ), человек обязан это видеть: иначе он примет
+                    половину рынка за весь рынок. */}
+                {["longs", "shorts", "oi", "flow"].includes(kind) && (
+                  <span style={{ color: oi.from.length > 1 ? "var(--label-3)" : "var(--orange)" }}>
+                    {" · "}{oi.from.length ? oi.from.join(" + ") : "нет данных"}
+                  </span>
+                )}
               </div>
               {/* Пустая панель без объяснения читается как поломка. А у СВД и
                   ликвидаций пусто — нормальное состояние: истории у них нет
