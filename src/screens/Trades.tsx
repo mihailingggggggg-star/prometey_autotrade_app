@@ -1,11 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown, Search, Trophy, Percent, TrendingDown, Scale } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 import { Glass, GroupLabel, Press, Segmented, Title, tone } from "../ui/kit";
+import { Dash } from "./Dash";
 import { useApp } from "../lib/store";
 import type { Trade } from "../lib/mock";
-import * as M from "../lib/mock";
 import { money, rr, dt, price, plural } from "../lib/format";
+import { TradeChart, type Mark } from "../ui/TradeChart";
+import { fetchRange, INTERVALS, type Candle, type Interval } from "../lib/market";
+import { stepOf } from "../lib/flow";
+import { cssVar } from "../ui/kit";
 
 type P = "d" | "w" | "m" | "all";
 const OPTS: { id: P; label: string; days: number }[] = [
@@ -43,23 +47,6 @@ export function Trades() {
       .filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase()));
   }, [trades, p, q]);
 
-  const k = useMemo(() => {
-    const wins = rows.filter((r) => r.pnl > 0), loss = rows.filter((r) => r.pnl < 0);
-    const be = rows.filter((r) => r.pnl === 0 || r.reason === "be");
-    const gp = wins.reduce((s, r) => s + r.pnl, 0);
-    const gl = Math.abs(loss.reduce((s, r) => s + r.pnl, 0));
-    let eq = 0, peak = 0, dd = 0;
-    [...rows].sort((a, b) => a.closedAt - b.closedAt).forEach((r) => {
-      eq += r.pnl; peak = Math.max(peak, eq); dd = Math.min(dd, eq - peak);
-    });
-    return {
-      net: gp - gl, wr: wins.length + loss.length ? Math.round((wins.length / (wins.length + loss.length)) * 100) : 0,
-      pf: gl ? +(gp / gl).toFixed(2) : null, dd: +dd.toFixed(2),
-      avgW: wins.length ? gp / wins.length : 0, avgL: loss.length ? gl / loss.length : 0,
-      be: be.length, n: rows.length,
-    };
-  }, [rows]);
-
   return (
     <div className="pb-2">
       <Title sub="История и аналитика">Сделки</Title>
@@ -68,29 +55,12 @@ export function Trades() {
         <Segmented value={p} onChange={setP} options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
       </div>
 
-      {/* ── Кривая депозита ────────────────────────────────────────────────── */}
-      <div className="px-4 mt-3">
-        <Glass className="p-4 pb-2">
-          <div className="flex items-baseline justify-between">
-            <span className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
-              Кривая депозита
-            </span>
-            <span className="text-[17px] font-bold" style={{ color: tone(k.net) }}>{money(k.net, true)}</span>
-          </div>
-          <Equity trades={rows} />
-        </Glass>
-      </div>
-
-      {/* ── Ключевые метрики ───────────────────────────────────────────────── */}
-      <div className="px-4 mt-2.5 grid grid-cols-2 gap-2.5">
-        <Metric icon={<Trophy size={15} />} label="Винрейт" value={`${k.wr}%`}
-                note={`${k.be} ${plural(k.be, "безубыток", "безубытка", "безубытков")} не в счёте`} />
-        <Metric icon={<Percent size={15} />} label="Профит-фактор" value={k.pf === null ? "—" : k.pf.toFixed(2)}
-                note={k.pf && k.pf >= 1 ? "прибыль перекрывает убыток" : "убыток перекрывает прибыль"} />
-        <Metric icon={<TrendingDown size={15} />} label="Макс. просадка" value={money(k.dd)} tint="var(--red)"
-                note="от пика кривой" />
-        <Metric icon={<Scale size={15} />} label="Средние" value={`${k.avgW.toFixed(1)} / ${k.avgL.toFixed(1)}`}
-                note="прибыль / убыток, $" />
+      {/* ── Дашборды ───────────────────────────────────────────────────────
+          Карточка отвечает на один вопрос одним числом, по тапу открывается
+          тот же график в полный рост — с наведением и объяснением, что это
+          число значит. Без объяснения «профит-фактор 1.4» остаётся цифрой. */}
+      <div className="mt-3">
+        <Dash trades={rows} />
       </div>
 
       {/* ── История ────────────────────────────────────────────────────────── */}
@@ -116,20 +86,6 @@ export function Trades() {
         )}
       </div>
     </div>
-  );
-}
-
-function Metric({ icon, label, value, note, tint }: {
-  icon: React.ReactNode; label: string; value: string; note?: string; tint?: string;
-}) {
-  return (
-    <Glass flat className="p-3.5">
-      <div className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--label-2)" }}>
-        {icon}{label}
-      </div>
-      <div className="text-[22px] font-bold mt-1 tracking-tight" style={{ color: tint || "var(--label)" }}>{value}</div>
-      {note && <div className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--label-3)" }}>{note}</div>}
-    </Glass>
   );
 }
 
@@ -174,6 +130,11 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
               <D k="Был в минусе" v={rr(t.mae)} c={tone(-1)} />
               <D k="Схема выхода" v={t.scheme} wide />
             </div>
+            {/* График сделки — по тапу, а не сразу: рисовать его всем строкам
+                списка значило бы тянуть свечи по каждой сделке за месяц. */}
+            <div className="px-3 pb-3" data-noswipe>
+              <ClosedChart t={t} />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -193,37 +154,74 @@ function D({ k, v, c, wide }: { k: string; v: string; c?: string; wide?: boolean
   );
 }
 
-/** Кривая депозита на чистом SVG с градиентной заливкой.
- *  Строится из ЗАКРЫТЫХ сделок нарастающим итогом — то же правило, что в
- *  отчётах бота: у открытой позиции результата ещё нет. */
-function Equity({ trades }: { trades: Trade[] }) {
-  const d = useMemo(() => {
-    const rows = [...trades].sort((a, b) => a.closedAt - b.closedAt);
-    if (rows.length < 2) return M.equity;
-    let v = M.START_DEPOSIT;
-    return [{ t: rows[0].closedAt, v }, ...rows.map((r) => ({ t: r.closedAt, v: +(v += r.pnl).toFixed(2) }))];
-  }, [trades]);
-  const w = 320, h = 108, pad = 4;
-  const xs = d.map((_, i) => pad + (i * (w - pad * 2)) / (d.length - 1));
-  const lo = Math.min(...d.map((p) => p.v)), hi = Math.max(...d.map((p) => p.v));
-  const ys = d.map((p) => h - pad - ((p.v - lo) / (hi - lo || 1)) * (h - pad * 2));
-  const line = xs.map((x, i) => `${i ? "L" : "M"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
-  const area = `${line} L${xs[xs.length - 1]},${h} L${xs[0]},${h} Z`;
-  const up = d[d.length - 1].v >= d[0].v;
-  const c = up ? "var(--green)" : "var(--red)";
+/* ── График закрытой сделки ──────────────────────────────────────────────────
+   Вход и выход — треугольниками по направлению сделки, между ними линейка с
+   расстоянием в процентах: так это читается у Tiger Trade, и читается верно —
+   первым делом видно, куда сделка пошла и насколько.
+
+   Окно: от входа до ЗАКРЫТИЯ ПЛЮС ВОСЕМЬ ЧАСОВ (решение владельца). Дальше
+   свечи ничего не добавляют к разбору сделки, а тянуть их — лишние запросы на
+   каждую строку истории. */
+const AFTER_MS = 8 * 3600e3;
+
+/** Шаг свечей под длину окна: цель — около сотни бар. На пяти минутах
+ *  двухдневная сделка дала бы 600 свечей волосками, на четырёх часах
+ *  пятнадцатиминутная — три свечи. */
+function intervalFor(ms: number): Interval {
+  const want = ms / 110 / 1000;
+  const ids = INTERVALS.map((i) => i.id);
+  return (ids.find((id) => stepOf(id) >= want) || ids[ids.length - 1]) as Interval;
+}
+
+function ClosedChart({ t }: { t: Trade }) {
+  const [candles, setCandles] = useState<Candle[] | null>(null);
+  const [fail, setFail] = useState("");
+  const openAt = t.closedAt - t.heldMin * 60000;
+  const to = Math.min(t.closedAt + AFTER_MS, Date.now());
+  const from = openAt - (to - openAt) * 0.15;
+  const iv = intervalFor(to - from);
+
+  useEffect(() => {
+    let alive = true;
+    setCandles(null); setFail("");
+    fetchRange(t.symbol, iv, from, to)
+      .then((c) => { if (alive) c.length ? setCandles(c) : setFail("свечей за это время у биржи нет"); })
+      .catch(() => alive && setFail("биржа не ответила"));
+    return () => { alive = false; };
+  }, [t.id]);
+
+  const marks = useMemo<Mark[]>(() => {
+    const st = stepOf(iv);
+    const snap = (ms: number) => Math.floor(ms / 1000 / st) * st;
+    return [
+      { time: snap(openAt), price: t.entry, kind: "in", side: t.side, text: "вход" },
+      { time: snap(t.closedAt), price: t.exit, kind: "out", side: t.side, text: "выход" },
+    ];
+  }, [t.id, iv]);
+
+  if (fail) {
+    return (
+      <div className="h-[60px] flex items-center justify-center text-[12px]"
+           style={{ color: "var(--label-3)" }}>{fail}</div>
+    );
+  }
+  if (!candles) {
+    return (
+      <div className="h-[60px] flex items-center justify-center text-[12px]"
+           style={{ color: "var(--label-2)" }}>Загружаем свечи сделки…</div>
+    );
+  }
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full mt-2" style={{ height: 108 }} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="eq" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={c} stopOpacity="0.32" />
-          <stop offset="100%" stopColor={c} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#eq)" />
-      <motion.path d={line} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                   initial={{ pathLength: 0 }} animate={{ pathLength: 1 }}
-                   transition={{ duration: 0.9, ease: [0.32, 0.72, 0, 1] }} />
-      <circle cx={xs[xs.length - 1]} cy={ys[ys.length - 1]} r="3.5" fill={c} />
-    </svg>
+    <>
+      <TradeChart symbol={t.symbol} interval={iv} candles={candles} marks={marks} height={200}
+                  levels={[
+                    { kind: "entry", price: t.entry, title: "вход", color: cssVar("--label-2", "#8e8e93") },
+                    { kind: "sl", price: t.exit, title: "выход",
+                      color: cssVar(t.pnl >= 0 ? "--green" : "--red", "#30d158") },
+                  ]} />
+      <div className="text-center text-[10px] mt-1" style={{ color: "var(--label-3)" }}>
+        {INTERVALS.find((i) => i.id === iv)?.label} · окно сделки и 8 часов после закрытия
+      </div>
+    </>
   );
 }
