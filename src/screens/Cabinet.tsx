@@ -38,7 +38,7 @@ export function Cabinet() {
         <div className="flex flex-col items-center pt-1 pb-3">
           <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center text-[28px]
                           font-bold"
-               style={{ background: "linear-gradient(145deg, var(--lime), #8fbf2f)", color: "#0b0f07",
+               style={{ background: "var(--tint-grad)", color: "#fff",
                         boxShadow: "0 10px 26px -10px color-mix(in srgb, var(--lime) 70%, transparent)" }}>
             {initials(a.me?.name || a.user.name || "Т")}
           </div>
@@ -61,7 +61,7 @@ export function Cabinet() {
           <Press onClick={() => setPlans(true)} className="block">
             <Glass flat className="p-3.5 h-full">
               <span className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: "var(--lime)", color: "#0b0f07" }}>
+                    style={{ background: "var(--tint-grad)", color: "#fff" }}>
                 <BadgeCheck size={16} />
               </span>
               <div className="text-[15px] font-semibold mt-2">
@@ -110,7 +110,7 @@ export function Cabinet() {
                    ? a.topUp(50)
                    : setPay({ title: "Пополнение баланса", amount: 50, note: "Любая сумма от $10" })}>
             <div className="py-3 rounded-[14px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>
+                 style={{ background: "var(--tint-grad)" }}>
               {a.can.topupFree ? "Начислить $50 (владелец)" : "Пополнить"}
             </div>
           </Press>
@@ -356,7 +356,7 @@ function PlansSheet({ open, onClose, onBuy }: { open: boolean; onClose: () => vo
 
         <Press feel="press" className="block w-full mt-4" onClick={() => onBuy(sel)}>
           <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
-               style={{ background: "var(--tint)" }}>
+               style={{ background: "var(--tint-grad)" }}>
             Оплатить ${M.PLANS.find((p) => p.id === sel)!.price}
           </div>
         </Press>
@@ -482,7 +482,7 @@ function ApiSheet({ open, onClose, onGuide }: { open: boolean; onClose: () => vo
             <Press feel="press" className="block w-full" disabled={!k || !s}
                    onClick={() => { connectApi(k, s); haptic.ok(); }}>
               <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                   style={{ background: "var(--tint)" }}>Подключить</div>
+                   style={{ background: "var(--tint-grad)" }}>Подключить</div>
             </Press>
           </>
         )}

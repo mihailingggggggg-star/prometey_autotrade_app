@@ -96,7 +96,7 @@ export function WebLogin() {
          style={{ paddingTop: "calc(var(--safe-t) + 44px)",
                   paddingBottom: "calc(var(--safe-b) + 24px)" }}>
       <div className="w-[64px] h-[64px] rounded-[18px] flex items-center justify-center mb-5"
-           style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)",
+           style={{ background: "var(--tint-grad)",
                     boxShadow: "0 12px 32px -10px var(--tint)" }}>
         {step === "code" ? <KeyRound size={30} color="#fff" strokeWidth={2.2} />
           : <Phone size={28} color="#fff" strokeWidth={2.2} />}

@@ -152,7 +152,7 @@ export function Onboarding({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }
               </div>
               <Press feel="press" onClick={next}>
                 <div className="px-5 py-2.5 rounded-[14px] text-[15px] font-semibold text-white flex items-center gap-1.5"
-                     style={{ background: "var(--tint)" }}>
+                     style={{ background: "var(--tint-grad)" }}>
                   {step.cta || (i === STEPS.length - 1 ? "Готово" : "Далее")}
                   {!step.final && <ArrowRight size={16} />}
                 </div>

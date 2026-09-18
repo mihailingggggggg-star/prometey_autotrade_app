@@ -52,7 +52,7 @@ export function LensButton({ lens, onLens }: { lens: Lens; onLens: (l: Lens) => 
           {!!n && (
             <span className="absolute -top-1 -right-1 w-[15px] h-[15px] rounded-full text-[9px]
                              font-bold flex items-center justify-center"
-                  style={{ background: "var(--lime)", color: "#0b0f07" }}>{n}</span>
+                  style={{ background: "var(--tint-grad)", color: "#fff" }}>{n}</span>
           )}
         </span>
       </Press>
@@ -143,7 +143,7 @@ export function PaneSheet({ open, onClose, panes, onPanes }: {
         <Press onClick={() => { haptic.ok(); onPanes(PANES_DEFAULT); }} className="block w-full">
           <div className="py-3 rounded-[16px] flex items-center justify-center gap-2 text-[15px]
                           font-semibold"
-               style={{ background: "var(--lime)", color: "#0b0f07" }}>
+               style={{ background: "var(--tint-grad)", color: "#fff" }}>
             <Sparkles size={16} /> Рекомендованный набор
           </div>
         </Press>
@@ -164,7 +164,7 @@ export function PaneSheet({ open, onClose, panes, onPanes }: {
                     <span className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center shrink-0"
                           style={{ background: on ? "var(--lime)" : "transparent",
                                    border: on ? "none" : "1px solid var(--label-3)" }}>
-                      {on && <Check size={13} strokeWidth={3} color="#0b0f07" />}
+                      {on && <Check size={13} strokeWidth={3} color="#fff" />}
                     </span>
                     <span className="min-w-0">
                       <span className="block text-[15px]">

@@ -34,7 +34,7 @@ export function AddToHomeCard({ onDone }: { onDone: () => void }) {
         <Press onClick={() => { haptic.tap(); setOpen(true); }} className="block w-full" scale={0.98}>
           <Glass className="p-4 flex items-center gap-3.5">
             <span className="flex items-center justify-center w-11 h-11 rounded-[13px] shrink-0"
-                  style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)" }}>
+                  style={{ background: "var(--tint-grad)" }}>
               <Smartphone size={22} color="#fff" />
             </span>
             <div className="min-w-0 flex-1">
@@ -119,7 +119,7 @@ export function AddToHomeSheet({ open, onClose, onDone }: {
           <Press onClick={systemInstall} feel="press" className="block w-full">
             <div className="py-3.5 rounded-[16px] flex items-center justify-center gap-2
                             text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>
+                 style={{ background: "var(--tint-grad)" }}>
               <SquarePlus size={17} /> Установить приложение
             </div>
           </Press>

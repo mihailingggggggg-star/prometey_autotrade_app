@@ -31,7 +31,7 @@ export function Lock({ busy, ask }: { busy: boolean; ask: () => void }) {
   return (
     <div className="relative z-10 h-full flex flex-col items-center justify-center px-8 text-center">
       <div className="w-[76px] h-[76px] rounded-[22px] flex items-center justify-center mb-6"
-           style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)",
+           style={{ background: "var(--tint-grad)",
                     boxShadow: "0 12px 32px -10px var(--tint)" }}>
         <Fingerprint size={38} color="#fff" strokeWidth={2} />
       </div>

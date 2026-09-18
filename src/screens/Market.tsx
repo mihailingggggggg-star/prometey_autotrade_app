@@ -199,7 +199,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                        className="flex-1" scale={0.94}>
                   <div className="py-1.5 rounded-[10px] text-center text-[13px] font-medium"
                        style={tf === i.id
-                         ? { background: "var(--tint)", color: "#fff" }
+                         ? { background: "var(--tint-grad)", color: "#fff" }
                          : { color: "var(--label-2)" }}>{i.label}</div>
                 </Press>
               ))}
@@ -234,7 +234,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
             </div>
             {levels.some((l) => l.drag) && (
               <div className="text-center text-[10px] mt-1" style={{ color: "var(--label-3)" }}>
-                ручки ⇅ справа тянут уровень — перед отправкой на биржу спросим
+                коснитесь линии уровня — появится ручка, и линию можно тянуть
               </div>
             )}
           </Glass>
@@ -297,7 +297,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
           <Press feel="press" className="block w-full"
                  onClick={() => { updateLevels(p.id, tp, sl); haptic.ok(); setEdit(false); }}>
             <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>Сохранить</div>
+                 style={{ background: "var(--tint-grad)" }}>Сохранить</div>
           </Press>
         </div>
       </Sheet>
@@ -331,7 +331,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                        haptic.ok(); setAsk(null);
                      }}>
                 <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                     style={{ background: "var(--tint)" }}>Перенести</div>
+                     style={{ background: "var(--tint-grad)" }}>Перенести</div>
               </Press>
             </div>
           </div>
@@ -480,7 +480,7 @@ function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
         {INTERVALS.map((i) => (
           <Press key={i.id} onClick={() => { haptic.select(); onInterval(i.id); }} className="flex-1" scale={0.94}>
             <div className="py-1.5 rounded-[10px] text-center text-[13px] font-medium"
-                 style={interval === i.id ? { background: "var(--tint)", color: "#fff" } : { color: "var(--label-2)" }}>
+                 style={interval === i.id ? { background: "var(--tint-grad)", color: "#fff" } : { color: "var(--label-2)" }}>
               {i.label}
             </div>
           </Press>

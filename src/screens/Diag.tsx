@@ -141,7 +141,7 @@ function DiagSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
         {!hasApi && !inTelegram && (
           <Press onClick={() => setConnect(true)} feel="press" className="block w-full">
             <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>Подключить счёт кодом</div>
+                 style={{ background: "var(--tint-grad)" }}>Подключить счёт кодом</div>
           </Press>
         )}
 

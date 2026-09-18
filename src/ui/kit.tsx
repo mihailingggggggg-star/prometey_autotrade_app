@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { haptic } from "../lib/tg";
@@ -77,6 +77,7 @@ export function Segmented<T extends string>({
 export function Sheet({
   open, onClose, title, children, tall,
 }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; tall?: boolean }) {
+  const grab = useDragControls();
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -94,20 +95,34 @@ export function Sheet({
             className="absolute inset-0"
             style={{ background: "rgba(0,0,0,.35)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }} />
           <motion.div
-            drag="y" dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.45 }}
+            /* Тянуть вниз можно ТОЛЬКО за шапку (dragListener выключен, жест
+               запускает шапка через dragControls). Иначе жест закрытия спорит с
+               прокруткой содержимого: лист уезжал вниз вместо того, чтобы
+               прокрутить список, и до нижних строк было не добраться. */
+            drag="y" dragListener={false} dragControls={grab}
+            dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.45 }}
             onDragEnd={(_, i) => { if (i.offset.y > 110 || i.velocity.y > 700) { haptic.tap(); onClose(); } }}
             initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={SPRING_SOFT}
-            className="glass relative w-full"
+            className="glass relative w-full flex flex-col"
             style={{
               borderRadius: "22px 22px 0 0",
-              maxHeight: tall ? "92%" : "82%",
+              /* Высота листа — от экрана, а его содержимое тянется остатком
+                 (flex-1 + min-h-0) и прокручивается. Раньше у прокрутки стоял
+                 maxHeight в процентах ОТ РОДИТЕЛЯ, высота которого сама зависела
+                 от содержимого: на длинном списке нижние строки просто не
+                 доезжали. */
+              maxHeight: tall ? "92svh" : "82svh",
               paddingBottom: "calc(20px + var(--safe-b))",
             }}>
-            <div className="pt-2.5 pb-1 flex justify-center">
+            <div className="pt-2.5 pb-1 flex justify-center shrink-0 cursor-grab"
+                 style={{ touchAction: "none" }}
+                 onPointerDown={(e) => grab.start(e)}>
               <div className="w-9 h-[5px] rounded-full" style={{ background: "var(--label-3)" }} />
             </div>
             {title && (
-              <div className="px-5 pb-2 flex items-center justify-between">
+              <div className="px-5 pb-2 flex items-center justify-between shrink-0"
+                   style={{ touchAction: "none" }}
+                   onPointerDown={(e) => grab.start(e)}>
                 <h2 className="text-[20px] font-bold tracking-[-0.02em]">{title}</h2>
                 <Press onClick={onClose} className="rounded-full p-1.5"
                        aria-label="Закрыть">
@@ -118,7 +133,9 @@ export function Sheet({
                 </Press>
               </div>
             )}
-            <div className="scroll px-5" style={{ maxHeight: tall ? "78%" : "66%" }}>{children}</div>
+            <div className="scroll px-5 flex-1 min-h-0" style={{ overscrollBehavior: "contain" }}>
+              {children}
+            </div>
           </motion.div>
         </div>
       )}
@@ -141,7 +158,10 @@ export function Modal({
           <motion.div
             initial={{ scale: 0.9, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.94, opacity: 0 }} transition={SPRING}
-            className="glass relative w-full max-w-[380px] p-5">
+            /* Прокрутка и здесь: длинное подтверждение (например, разбор
+               отказа биржи) иначе упиралось в край экрана и обрезалось. */
+            className="glass relative w-full max-w-[380px] p-5 scroll"
+            style={{ maxHeight: "86svh", overscrollBehavior: "contain" }}>
             {children}
           </motion.div>
         </div>

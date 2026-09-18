@@ -29,7 +29,7 @@ export function ApiGuide() {
           <li key={i}>
             <Glass flat className="p-3.5 flex gap-3">
               <span className="flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-[13px] font-bold text-white"
-                    style={{ background: "var(--tint)" }}>{i + 1}</span>
+                    style={{ background: "var(--tint-grad)" }}>{i + 1}</span>
               <div>
                 <div className="text-[15px] font-medium leading-snug">{s.t}</div>
                 <div className="text-[13px] mt-1 leading-snug" style={{ color: "var(--label-2)" }}>{s.d}</div>

@@ -380,7 +380,7 @@ function QuickAction({ icon, label, tint, onClick, disabled, locked }: {
           </p>
           <Press onClick={() => setHint(false)} className="block w-full mt-5">
             <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                 style={{ background: "var(--tint)" }}>Понятно</div>
+                 style={{ background: "var(--tint-grad)" }}>Понятно</div>
           </Press>
         </div>
       </Modal>

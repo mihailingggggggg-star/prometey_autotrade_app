@@ -21,7 +21,7 @@ export function ConnectCard() {
         <Press onClick={() => { haptic.tap(); setOpen(true); }} className="block w-full" scale={0.98}>
           <Glass className="p-4 flex items-center gap-3.5">
             <span className="flex items-center justify-center w-11 h-11 rounded-[13px] shrink-0"
-                  style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)" }}>
+                  style={{ background: "var(--tint-grad)" }}>
               <Link2 size={22} color="#fff" />
             </span>
             <div className="min-w-0 flex-1">

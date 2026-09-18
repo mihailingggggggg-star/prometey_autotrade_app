@@ -24,7 +24,7 @@ export function Auth() {
               <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                           transition={{ ...SPRING, delay: 0.05 }}
                           className="w-[72px] h-[72px] rounded-[20px] flex items-center justify-center mb-6"
-                          style={{ background: "linear-gradient(145deg,var(--tint),#5e5ce6)",
+                          style={{ background: "var(--tint-grad)",
                                    boxShadow: "0 12px 32px -10px var(--tint)" }}>
                 <Zap size={36} color="#fff" strokeWidth={2.4} />
               </motion.div>
@@ -44,7 +44,7 @@ export function Auth() {
             </div>
             <Press feel="press" className="block w-full" onClick={() => setStep("phone")}>
               <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white flex items-center justify-center gap-2"
-                   style={{ background: "var(--tint)" }}>
+                   style={{ background: "var(--tint-grad)" }}>
                 Войти через Telegram <ArrowRight size={19} />
               </div>
             </Press>
@@ -78,7 +78,7 @@ export function Auth() {
                      setStage("onboarding");
                    }}>
               <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white"
-                   style={{ background: "var(--tint)" }}>
+                   style={{ background: "var(--tint-grad)" }}>
                 {email.includes("@") ? "Продолжить" : "Пропустить"}
               </div>
             </Press>
@@ -175,7 +175,7 @@ function PhoneStep({ onDone, phone, setPhone }: {
       ) : (
         <Press feel="press" className="block w-full" onClick={onDone}>
           <div className="py-4 rounded-[18px] text-center text-[17px] font-semibold text-white flex items-center justify-center gap-2"
-               style={{ background: "var(--tint)" }}>
+               style={{ background: "var(--tint-grad)" }}>
             Дальше <ArrowRight size={19} />
           </div>
         </Press>

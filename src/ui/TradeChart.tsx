@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart,
          createSeriesMarkers,
          type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { GripHorizontal } from "lucide-react";
 import { useCandles } from "../lib/useMarket";
 import { decimalsOf, type Candle, type Interval } from "../lib/market";
 import { ema, type Trade as FlowTrade } from "../lib/flow";
@@ -89,6 +90,11 @@ export function TradeChart({
   const fitted = useRef(false);
   const drag = useRef<{ kind: Level["kind"]; price: number } | null>(null);
   const [dragging, setDragging] = useState<{ kind: Level["kind"]; price: number } | null>(null);
+  /* Уровень «взят в работу»: сначала тап по линии, и только потом её можно
+     тянуть. Постоянные ручки на краю графика мешали жестам и позволяли задеть
+     заявку случайным мазком; тап — намеренное действие, и он же показывает,
+     что линия вообще подвижна. */
+  const [armed, setArmed] = useState<Level["kind"] | null>(null);
 
   const feed = useCandles(symbol, interval);
   const candles = fixed ?? feed.candles;
@@ -368,6 +374,33 @@ export function TradeChart({
 
   const sync = () => setTick((t) => (t + 1) % 1e6);
 
+  /* Тап ловит САМ ГРАФИК (subscribeClick), а не прозрачная полоса поверх него.
+     Полоса перехватывала бы и протяжку времени на высоте линии — то есть
+     ломала бы обычную навигацию ради редкого действия. */
+  useEffect(() => {
+    const c = chart.current;
+    if (!c || !onLevel) return;
+    const near = (param: any) => {
+      if (!param?.point) { setArmed(null); return; }
+      const gg = geom();
+      if (!gg) return;
+      const y = param.point.y + gg.main.top;
+      let best: Level["kind"] | null = null;
+      let bestD = 16;                     // палец толще линии — 16px по вертикали
+      levels.filter((l) => l.drag && l.price > 0).forEach((l) => {
+        const ly = gg.y(l.price);
+        if (ly == null) return;
+        const d = Math.abs(ly - y);
+        if (d < bestD) { bestD = d; best = l.kind; }
+      });
+      // Повторный тап по той же линии снимает её с ручки: иначе снять уровень
+      // можно было бы только промахом, а промах — плохой способ управления.
+      setArmed((cur) => (best && cur === best ? null : best));
+    };
+    c.subscribeClick(near);
+    return () => c.unsubscribeClick(near);
+  }, [JSON.stringify(levels), onLevel, panes.join(",")]);
+
   /* Геометрия накладки. Всё считается ОТ pane 0: у каждой панели своя система
      координат, и цена живёт только в первой. Границы панелей берём у самого
      графика, а не считаем из высот: он их распределяет сам, и наша арифметика
@@ -431,7 +464,7 @@ export function TradeChart({
       const was = levels.find((x) => x.kind === d.kind)?.price || 0;
       // Мазок в пару пикселей — это промах, а не заявка: отправлять на биржу
       // «перенос» на нулевое расстояние незачем.
-      if (Math.abs(d.price - was) > was * 0.0002) onLevel(d.kind, d.price);
+      if (Math.abs(d.price - was) > was * 0.0002) { onLevel(d.kind, d.price); setArmed(null); }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -511,8 +544,9 @@ export function TradeChart({
           );
         })}
 
-        {/* Ручки уровней. Только у тех, за которыми стоит настоящая заявка. */}
-        {onLevel && g && dragLevels.map((l) => {
+        {/* Взятый в работу уровень: подсветка линии во всю ширину и ручка на
+            ней. Тянется САМА ЛИНИЯ — палец может взяться где угодно на ней. */}
+        {onLevel && g && dragLevels.filter((l) => l.kind === armed).map((l) => {
           const cur = dragging?.kind === l.kind ? dragging.price : l.price;
           const raw = g.y(cur);
           if (raw == null) return null;
@@ -521,20 +555,38 @@ export function TradeChart({
              границам панели ЦЕНЫ — уехав ниже, ручка попала бы в панель
              индикатора, где никакой цены нет. */
           const y = Math.max(g.main.top + 14, Math.min(raw, g.main.bottom - 16));
+          const hot = dragging?.kind === l.kind;
           return (
-            <div key={l.kind}
-                 onPointerDown={(e) => startDrag(e, l)}
-                 className="absolute right-[52px] -translate-y-1/2 px-2 py-[5px] rounded-[9px]
-                            text-[11px] font-bold tabular-nums pointer-events-auto select-none
-                            flex items-center gap-1"
-                 style={{ top: y, background: "color-mix(in srgb, var(--bg) 72%, transparent)",
-                          border: `1px solid ${l.color}`, color: l.color,
-                          touchAction: "none", cursor: "ns-resize",
-                          boxShadow: dragging?.kind === l.kind ? `0 0 0 4px color-mix(in srgb, ${l.color} 22%, transparent)` : "none" }}>
-              <span className="opacity-70">⇅</span>{l.title} {fmtPrice(cur)}
+            <div key={l.kind} onPointerDown={(e) => startDrag(e, l)}
+                 className="absolute left-0 right-0 pointer-events-auto select-none"
+                 style={{ top: y, height: 30, marginTop: -15, touchAction: "none",
+                          cursor: "ns-resize" }}>
+              {/* Сама линия: рисуем поверх графиковой, чтобы было видно, что
+                  именно взято. */}
+              <div className="absolute left-0 right-0" style={{
+                     top: 14, height: 2, background: l.color,
+                     boxShadow: `0 0 10px 1px color-mix(in srgb, ${l.color} 55%, transparent)` }} />
+              <div className="absolute right-[52px] top-1/2 -translate-y-1/2 px-2 py-[5px] rounded-[9px]
+                              text-[11px] font-bold tabular-nums flex items-center gap-1.5"
+                   style={{ background: "color-mix(in srgb, var(--bg) 82%, transparent)",
+                            border: `1px solid ${l.color}`, color: l.color,
+                            boxShadow: hot ? `0 0 0 5px color-mix(in srgb, ${l.color} 20%, transparent)` : "none" }}>
+                <GripHorizontal size={13} />{l.title} {fmtPrice(cur)}
+              </div>
             </div>
           );
         })}
+
+        {/* Подсказка появляется ровно один раз — в момент, когда уровень взят.
+            Постоянная строка внизу графика съедала бы место ради того, что
+            нужно узнать однажды. */}
+        {armed && (
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-1 px-2 py-[3px] rounded-full
+                          text-[10px] glass-lens whitespace-nowrap"
+               style={{ color: "var(--label-2)" }}>
+            тяните линию · повторный тап отменяет
+          </div>
+        )}
       </div>
 
       {(loading || error) && (
