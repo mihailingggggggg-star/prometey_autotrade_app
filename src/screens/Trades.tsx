@@ -16,20 +16,21 @@ import { getHealth } from "../lib/api";
 import { drawShareCard, shareCardBlob, type ShareKind, type ShareTrade } from "../ui/ShareCard";
 import { CardPreview } from "../ui/CardPreview";
 
-/** Контур, по которому смотрим аналитику.
- *
- *  Разделение обязательно, а не «удобно»: у контуров разный горизонт и разная
- *  частота. Алгос закрывает сделку за минуты и делает их кратно больше — слитые
- *  в одну кучу, они переписывают собой винрейт, среднюю длительность и
- *  профит-фактор, и по общей цифре нельзя судить ни об одном из двух.
- *  Переключатель появляется ТОЛЬКО когда сделки алгоса в периоде есть: пока
- *  режим выключен, лишний орган управления объяснял бы то, чего нет. */
-type Src = "all" | "screener" | "algo";
-const SRC: { id: Src; label: string }[] = [
-  { id: "all", label: "Все" },
-  { id: "screener", label: "Скринер" },
-  { id: "algo", label: "Алгос" },
-];
+/* Переключателя контуров тут больше НЕТ, и это не упрощение, а следствие.
+   Сделки режима «алгос» в аналитику автотрейда не приходят вовсе — их отсекает
+   сервер (см. store.NOT_ALGO в боте). Причина не в качестве результата, а в
+   его несравнимости: алгос закрывает сделку за минуты и не по цене, и делает
+   их кратно больше, поэтому в общей куче он переписывает собой винрейт,
+   среднюю длительность и профит-фактор. Замер режима живёт отдельно, в
+   алгос-лабе скринера, где меряется тем, чем его и надо мерить.
+
+   Переключатель, у которого одна сторона всегда пуста, — это орган управления,
+   объясняющий то, чего нет.
+
+   Тег «алгос» в строках истории при этом ОСТАЁТСЯ, и он не мёртвый: интерфейс
+   на Pages обновляется мгновенно, а бот на сервере — руками. Пока владелец не
+   перезапустил его, старая версия продолжает отдавать сделки алгоса, и без
+   тега они выглядели бы как сигналы скринера. */
 
 type P = "d" | "w" | "m" | "all";
 const OPTS: { id: P; label: string; days: number }[] = [
@@ -57,13 +58,9 @@ const reasonOf = (code: string) => REASON[code] || { t: code, c: "var(--label-2)
 export function Trades() {
   const { trades } = useApp();
   const [p, setP] = useState<P>("m");
-  const [src, setSrc] = useState<Src>("all");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  /* Сделки периода ДО фильтра по контуру — по ним решаем, показывать ли сам
-     переключатель. Считать это по отфильтрованному списку нельзя: выбрав
-     «Алгос», мы бы спрятали переключатель, которым только что воспользовались. */
   const inPeriod = useMemo(() => {
     /* Границы периода — по КАЛЕНДАРНЫМ суткам Бишкека (см. lib/stats): было
        скользящее окно, и «Сегодня» показывало последние 24 часа, то есть
@@ -72,14 +69,9 @@ export function Trades() {
     return trades.filter((t) => t.closedAt >= from);
   }, [trades, p]);
 
-  const hasAlgo = useMemo(() => inPeriod.some((t) => t.source === "algo"), [inPeriod]);
-
-  const rows = useMemo(() => inPeriod
-    /* Ряд без метки — скринер, а не «неизвестно»: так записаны все сделки до
-       появления второго контура. */
-    .filter((t) => src === "all" || (t.source || "screener") === src)
-    .filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase())),
-    [inPeriod, src, q]);
+  const rows = useMemo(
+    () => inPeriod.filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase())),
+    [inPeriod, q]);
 
   return (
     <div className="pb-2">
@@ -89,11 +81,6 @@ export function Trades() {
         <Segmented value={p} onChange={setP} options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
       </div>
 
-      {hasAlgo && (
-        <div className="px-4 mt-2">
-          <Segmented value={src} onChange={setSrc} options={SRC} />
-        </div>
-      )}
 
       {/* ── Дашборды ───────────────────────────────────────────────────────
           Карточка отвечает на один вопрос одним числом, по тапу открывается
