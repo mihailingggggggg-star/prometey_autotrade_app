@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Maximize2, Search, Share2, X } from "lucide-react";
-import { AlgoTag, Glass, GroupLabel, Press, Segmented, Title, tone } from "../ui/kit";
+import { AlgoTag, Glass, GroupLabel, Press, Segmented, Title, portal, tone } from "../ui/kit";
 import { Dash } from "./Dash";
 import { useApp } from "../lib/store";
 import type { Trade } from "../lib/mock";
@@ -14,13 +13,8 @@ import { windowStart } from "../lib/stats";
 import { cssVar } from "../ui/kit";
 import { haptic } from "../lib/tg";
 import { getHealth } from "../lib/api";
-import { drawShareCard, shareCardBlob, type ShareTrade } from "../ui/ShareCard";
-
-/** Вынести разметку из-под стекла (см. ClosedChart). */
-const portal = (node: ReactNode) => {
-  const host = typeof document === "undefined" ? null : document.getElementById("root");
-  return host ? createPortal(node, host) : node;
-};
+import { drawShareCard, shareCardBlob, type ShareKind, type ShareTrade } from "../ui/ShareCard";
+import { CardPreview } from "../ui/CardPreview";
 
 /** Контур, по которому смотрим аналитику.
  *
@@ -106,7 +100,9 @@ export function Trades() {
           тот же график в полный рост — с наведением и объяснением, что это
           число значит. Без объяснения «профит-фактор 1.4» остаётся цифрой. */}
       <div className="mt-3">
-        <Dash trades={rows} />
+        {/* «Всё» сеткой не ограничиваем: 3650 пустых столбиков вместо графика. */}
+        <Dash trades={rows} gridDays={p === "all" ? 0 : OPTS.find((o) => o.id === p)!.days}
+              periodLabel={OPTS.find((o) => o.id === p)!.label} />
       </div>
 
       {/* ── История ────────────────────────────────────────────────────────── */}
@@ -318,7 +314,7 @@ function ClosedFull({ t, candles, marks, iv, onClose }: {
   const move = ((t.exit - t.entry) / t.entry) * 100 * (t.side === "long" ? 1 : -1);
   const share: ShareTrade = {
     symbol: t.symbol, side: t.side, entry: t.entry, exit: t.exit,
-    pnlPct: move, r: t.r, closedAt: t.closedAt, heldMin: t.heldMin,
+    pnlPct: move, pnlUsd: t.pnl, r: t.r, closedAt: t.closedAt, heldMin: t.heldMin,
   };
 
   return (
@@ -328,18 +324,22 @@ function ClosedFull({ t, candles, marks, iv, onClose }: {
                 className="fixed inset-0 z-[80] flex flex-col"
                 style={{ background: "var(--bg)", paddingTop: "var(--safe-t)",
                          paddingBottom: "var(--safe-b)" }}>
+      {/* Левая часть сжимается, правая — никогда: иначе длинный тикер с суммой
+          и R выталкивали кнопки за край экрана, и закрыть график было нечем. */}
       <div className="flex items-center gap-2 px-3 py-2 hairline">
-        <span className="text-[16px] font-semibold">{t.symbol.replace("USDT", "")}</span>
-        <AlgoTag source={t.source} />
-        <span className="text-[13px] px-1.5 py-0.5 rounded-md font-semibold"
-              style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
-          {t.side === "long" ? "LONG" : "SHORT"}
-        </span>
-        <span className="text-[15px] font-bold" style={{ color: tone(t.pnl) }}>
-          {money(t.pnl, true)}
-        </span>
-        <span className="text-[13px]" style={{ color: tone(t.r) }}>{rr(t.r)}</span>
-        <span className="ml-auto flex items-center gap-1.5">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-[16px] font-semibold truncate">{t.symbol.replace("USDT", "")}</span>
+          <AlgoTag source={t.source} />
+          <span className="text-[13px] px-1.5 py-0.5 rounded-md font-semibold shrink-0"
+                style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
+            {t.side === "long" ? "LONG" : "SHORT"}
+          </span>
+          <span className="text-[15px] font-bold shrink-0" style={{ color: tone(t.pnl) }}>
+            {money(t.pnl, true)}
+          </span>
+          <span className="text-[13px] shrink-0" style={{ color: tone(t.r) }}>{rr(t.r)}</span>
+        </div>
+        <span className="shrink-0 flex items-center gap-1.5">
           <Press onClick={() => { haptic.tap(); setCard(true); }} scale={0.9}>
             <span className="flex items-center justify-center w-9 h-9 rounded-full glass glass-flat">
               <Share2 size={16} />
@@ -373,64 +373,33 @@ function ClosedFull({ t, candles, marks, iv, onClose }: {
   );
 }
 
-/* ── Карточка для соцсетей ─────────────────────────────────────────────────
-   Сначала ПОКАЗЫВАЕМ, что уйдёт в ленту, и только потом отдаём. Картинкой
-   делятся публично; отправить её вслепую — значит однажды опубликовать не то,
-   что человек имел в виду. */
+/* ── Карточка сделки для соцсетей ──────────────────────────────────────────
+   Предпросмотр, переключатель версий и отдача файла — в общем компоненте
+   CardPreview: та же работа нужна и карточке кумулятивной прибыли. */
 function CardSheet({ t, candles, bot, onClose }: {
   t: ShareTrade; candles: Candle[]; bot: string; onClose: () => void;
 }) {
-  const cv = useRef<HTMLCanvasElement>(null);
-  const [busy, setBusy] = useState(false);
-  const line = useMemo(() => candles.map((c) => ({ time: c.time * 1000, close: c.close })), [candles]);
-
-  useEffect(() => { if (cv.current) drawShareCard(cv.current, t, line, bot); }, [t.symbol, bot]);
-
-  const send = async () => {
-    setBusy(true);
-    haptic.tap();
-    const blob = await shareCardBlob(t, line, bot);
-    setBusy(false);
-    if (!blob) return;
-    const file = new File([blob], `prometheus-${t.symbol}.png`, { type: "image/png" });
-    const text = `${t.symbol.replace("USDT", "")} ${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(2)}%`
-               + ` — сделку открыл и закрыл бот PROMETHEUS`;
-    /* Системный лист «Поделиться» есть не везде: в старом вебвью и на десктопе
-       его нет вовсе. Тогда просто отдаём файл — человек сам решит, куда его
-       деть. Молча ничего не делать в этом месте нельзя: кнопка нажата. */
-    if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file], text }); haptic.ok(); return; }
-      catch { /* закрыли лист — это не ошибка */ return; }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = file.name; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    haptic.ok();
-  };
-
+  /* Свечи целиком (OHLC), а не одни закрытия: линия закрытий прячет фитили —
+     то есть ровно те движения, из-за которых сделка выглядит так, как
+     выглядит. Время переводим в миллисекунды: у биржи оно в секундах. */
+  const ohlc = useMemo(() => candles.map((c) => ({ ...c, time: c.time * 1000 })), [candles]);
+  const draw = useCallback(
+    (cv: HTMLCanvasElement, kind: ShareKind) => drawShareCard(cv, t, ohlc, bot, kind),
+    [t, ohlc, bot]);
+  const coin = t.symbol.replace("USDT", "");
   return (
-    <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center p-5"
-         style={{ background: "rgba(0,0,0,.72)", backdropFilter: "blur(14px)",
-                  WebkitBackdropFilter: "blur(14px)" }}>
-      <motion.canvas ref={cv}
-        initial={{ opacity: 0, scale: 0.94, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="rounded-[22px] w-full"
-        style={{ maxWidth: 320, aspectRatio: "1080 / 1350",
-                 boxShadow: "0 30px 80px -20px rgba(255,40,70,.35)" }} />
-      <div className="flex gap-2.5 mt-5 w-full" style={{ maxWidth: 320 }}>
-        <Press onClick={onClose} className="flex-1">
-          <div className="py-3 rounded-[14px] text-center text-[15px] font-semibold glass glass-flat">
-            Отмена
-          </div>
-        </Press>
-        <Press onClick={() => void send()} className="flex-1" disabled={busy}>
-          <div className="py-3 rounded-[14px] text-center text-[15px] font-semibold text-white"
-               style={{ background: "var(--tint-grad)" }}>
-            {busy ? "Готовим…" : "Поделиться"}
-          </div>
-        </Press>
-      </div>
-    </div>
+    <CardPreview<ShareKind>
+      kinds={[{ id: "pct", label: "В процентах" }, { id: "usd", label: "В деньгах" }]}
+      initial="pct"
+      draw={draw}
+      blob={(kind) => shareCardBlob(t, ohlc, bot, kind)}
+      filename={() => `prometheus-${t.symbol}.png`}
+      text={(kind) => {
+        const win = kind === "usd"
+          ? `${t.pnlUsd >= 0 ? "+" : "−"}$${Math.abs(t.pnlUsd).toFixed(2)}`
+          : `${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(2)}%`;
+        return `${coin} ${win} — сделку открыл и закрыл бот PROMETHEUS`;
+      }}
+      onClose={onClose} />
   );
 }

@@ -48,9 +48,11 @@ type Ctx = {
   positions: M.Position[];
   closePosition: (id: string) => void;
   closeAllPositions: () => void;
-  updateLevels: (id: string, tp: number, sl: number) => void;
+  /** Возврат — удалось ли. Интерфейс показывает новый уровень СРАЗУ, не
+   *  дожидаясь сервера, и ему нужно знать, когда откатить показанное обратно. */
+  updateLevels: (id: string, tp: number, sl: number) => Promise<boolean>;
   /** Перенести цену неисполненной лимитки (у открытой позиции входа уже нет). */
-  moveEntry: (id: string, entry: number) => void;
+  moveEntry: (id: string, entry: number) => Promise<boolean>;
   feed: Feed;               // связь с рынком: live / connecting / offline
   marketReady: boolean;     // пришла ли настоящая цена хотя бы по одной монете
   mode: "demo" | "live";    // счёт бота: демо или реальные деньги
@@ -343,15 +345,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (demo) return void setClosed((c) => [...c, ...specs.map((x) => x.id)]);
       void act("close_all", () => API.closeAll());
     },
-    updateLevels: (id, tp, sl) => {
-      if (demo) return void setOverrides((o) => ({ ...o, [id]: { tp, sl } }));
-      void act("levels:" + id, () => API.setLevels(id, tp, sl));
+    updateLevels: async (id, tp, sl) => {
+      if (demo) { setOverrides((o) => ({ ...o, [id]: { tp, sl } })); return true; }
+      return act("levels:" + id, () => API.setLevels(id, tp, sl));
     },
     /* Перенос входа — ТОЛЬКО у лимитки, и только через сервер: там пересчитается
        размер под прежний риск и проверится, что ордер не пересёк рынок. */
-    moveEntry: (id, entry) => {
-      if (demo) return void setEntries((o) => ({ ...o, [id]: entry }));
-      void act("entry:" + id, () => API.moveEntry(id, entry));
+    moveEntry: async (id, entry) => {
+      if (demo) { setEntries((o) => ({ ...o, [id]: entry })); return true; }
+      return act("entry:" + id, () => API.moveEntry(id, entry));
     },
     trades, signals, payments, riskAlert,
   };

@@ -11,10 +11,13 @@
  * по одной сделке на бумаге, и они не зависят ни от экрана, ни от сети.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, BarChart3, Clock, Coins, Flame, Layers, Percent, PieChart,
-         Scale, Target, Timer, TrendingUp } from "lucide-react";
+         Scale, Share2, Target, Timer, TrendingUp } from "lucide-react";
 import { Glass, Press, Sheet, tone } from "../ui/kit";
+import { CardPreview } from "../ui/CardPreview";
+import { drawEquityCard, equityCardBlob, type ShareEquity, type ShareKind } from "../ui/ShareCard";
+import { getHealth } from "../lib/api";
 import { BarPlot, LinePlot } from "../ui/Plot";
 import { byDay, byHour, byReason, bySide, bySymbol, dayLabel, equity, rHist, summary } from "../lib/stats";
 import type { Trade } from "../lib/mock";
@@ -37,10 +40,27 @@ type Card = {
   extra?: ReactNode;
 };
 
-export function Dash({ trades }: { trades: Trade[] }) {
+/**
+ * `gridDays` — ширина сетки дней В СТОЛБИКАХ, по выбранному сверху периоду.
+ *
+ * Раньше сетка начиналась с первой сделки выборки, и это давало ровно ту
+ * ошибку, на которую жаловались: день без сделок в столбики не попадал вовсе,
+ * поэтому на счёте с одной вчерашней и одной сегодняшней сделкой график
+ * показывал два столбика, а стоило вчерашним закрыться после полуночи по
+ * Бишкеку — один. Период сверху при этом менялся, а картинка нет.
+ *
+ * Теперь столбики покрывают ВЕСЬ выбранный период: «7 дней» — это всегда семь
+ * столбиков, пустые дни видны провалами. 0 — период «Всё»: там сетку по-
+ * прежнему задаёт первая сделка, иначе получилось бы десять лет пустоты.
+ */
+export function Dash({ trades, gridDays = 0, periodLabel = "Всё время" }:
+                     { trades: Trade[]; gridDays?: number; periodLabel?: string }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [share, setShare] = useState(false);
+  const [bot, setBot] = useState("");
+  useEffect(() => { void getHealth().then((h) => setBot(h.bot || "")).catch(() => {}); }, []);
   const s = useMemo(() => summary(trades), [trades]);
-  const days = useMemo(() => byDay(trades), [trades]);
+  const days = useMemo(() => byDay(trades, gridDays), [trades, gridDays]);
   const eq = useMemo(() => equity(trades), [trades]);
 
   const cards = useMemo<Card[]>(() => {
@@ -267,6 +287,18 @@ export function Dash({ trades }: { trades: Trade[] }) {
       <Sheet open={!!cur} onClose={() => setOpen(null)} title={cur?.title} tall>
         {cur && (
           <div className="pb-3 space-y-3" data-noswipe>
+            {/* Поделиться можно КУМУЛЯТИВНОЙ ПРИБЫЛЬЮ — это итог периода, а не
+                одно число из середины отчёта. «Винрейт по дням» или «время в
+                рынке» сами по себе ничего не говорят тому, кто увидит их в
+                ленте, и карточка из них была бы просто скриншотом. */}
+            {cur.id === "eq" && s.n > 0 && (
+              <Press onClick={() => { haptic.tap(); setShare(true); }} className="block w-full">
+                <div className="py-2.5 rounded-[14px] text-center text-[15px] font-semibold
+                                flex items-center justify-center gap-2 glass glass-flat">
+                  <Share2 size={16} /> Карточка для соцсетей
+                </div>
+              </Press>
+            )}
             <div className="flex items-baseline gap-2">
               <span className="text-[30px] font-bold tracking-[-0.03em]"
                     style={{ color: cur.tint || "var(--label)" }}>{cur.value}</span>
@@ -285,7 +317,44 @@ export function Dash({ trades }: { trades: Trade[] }) {
           </div>
         )}
       </Sheet>
+
+      {share && (
+        <EquityCard trades={trades} s={s} eq={eq} bot={bot} periodLabel={periodLabel}
+                    onClose={() => setShare(false)} />
+      )}
     </>
+  );
+}
+
+/** Карточка кумулятивной прибыли. Точки — те же, что на дашборде: каждая
+ *  точка это сделка, а не день, иначе просадку внутри дня не увидеть. */
+function EquityCard({ trades, s, eq, bot, periodLabel, onClose }: {
+  trades: Trade[]; s: ReturnType<typeof summary>;
+  eq: { x: number; y: number }[]; bot: string; periodLabel: string; onClose: () => void;
+}) {
+  const data: ShareEquity = {
+    net: s.net, netR: s.netR, n: s.n, wins: s.wins, loss: s.loss,
+    periodLabel,
+    to: trades.length ? Math.max(...trades.map((t) => t.closedAt)) : Date.now(),
+  };
+  const draw = useCallback(
+    (cv: HTMLCanvasElement, kind: ShareKind) => drawEquityCard(cv, data, eq, bot, kind),
+    [JSON.stringify(data), eq, bot]);
+  return (
+    <CardPreview<ShareKind>
+      kinds={[{ id: "usd", label: "В деньгах" }, { id: "pct", label: "В R" }]}
+      initial="usd"
+      draw={draw}
+      blob={(kind) => equityCardBlob(data, eq, bot, kind)}
+      filename={() => "prometheus-profit.png"}
+      text={(kind) => {
+        const win = kind === "pct"
+          ? `${s.netR >= 0 ? "+" : ""}${s.netR.toFixed(2)}R`
+          : `${s.net >= 0 ? "+" : "−"}$${Math.abs(s.net).toFixed(2)}`;
+        return `${periodLabel}: ${win} за ${s.n} ${plural(s.n, "сделку", "сделки", "сделок")}`
+             + ` — торгует бот PROMETHEUS`;
+      }}
+      onClose={onClose} />
   );
 }
 

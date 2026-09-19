@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ensure as ensurePush } from "./lib/push";
 import { AnimatePresence, motion } from "motion/react";
 import { TabBar, TABS_ORDER, type Tab } from "./nav/TabBar";
 import { useApp } from "./lib/store";
@@ -43,6 +44,14 @@ export function App() {
   useEffect(() => {
     if (link === "ok" && registered && stage === "auth") setStage("app");
   }, [link, registered, stage, setStage]);
+
+  /* Подписка на уведомления ВОССТАНАВЛИВАЕТСЯ при запуске.
+     Она живёт в браузере и исчезает сама: система чистит её при долгом
+     простое, сервер выбрасывает мёртвые адреса. Без этого шага человек один
+     раз включил уведомления и молча перестал их получать, причём тумблеры
+     продолжали показывать «включено» — интерфейс уверял в том, чего нет.
+     Сюда же попадает случай «включили, когда у бота ещё не было ключей». */
+  useEffect(() => { if (link === "ok") void ensurePush(); }, [link]);
 
   return (
     /* h-full, а не min-h-full: прокручивается main, страница стоит на месте —

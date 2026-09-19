@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
          TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Sheet, Title, cssVar, tone, SPRING, AlgoTag } from "../ui/kit";
+import { Glass, Modal, Press, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
 import { money, price, pct, rr, ago } from "../lib/format";
@@ -132,7 +132,29 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
   /* Перетащенный уровень СНАЧАЛА спрашивает. За этими линиями стоят настоящие
      заявки на бирже, и жест пальцем не имеет права отправлять ордер молча. */
   const [ask, setAsk] = useState<{ kind: Level["kind"]; price: number } | null>(null);
-  const levels = useLevels(p, pending);
+  /* Перенесённый уровень показываем СРАЗУ, не дожидаясь сервера.
+     Между подтверждением и ответом лежат запрос к боту, его поход на биржу и
+     следующий опрос — до нескольких секунд. Всё это время линия стояла на
+     СТАРОМ месте, и перенос выглядел как несработавший: человек тянул её
+     снова и снова. Показываем заявленное, а когда сервер догонит — снимаем
+     накладку. Не догонит (биржа отказала) — линия возвращается сама. */
+  const [moved, setMoved] = useState<Partial<Record<Level["kind"], number>>>({});
+  const levels = useLevels(p, pending, moved);
+
+  /* Накладку снимаем, как только сервер показал ровно то, что мы просили:
+     держать её дольше значит скрывать расхождение с биржей. */
+  useEffect(() => {
+    const at = (k: Level["kind"]) => k === "entry" ? p.entry : k === "sl" ? p.sl : p.tp;
+    setMoved((m) => {
+      const next = { ...m };
+      let hit = false;
+      (Object.keys(next) as Level["kind"][]).forEach((k) => {
+        const want = next[k];
+        if (want && Math.abs(at(k) - want) <= want * 0.0002) { delete next[k]; hit = true; }
+      });
+      return hit ? next : m;
+    });
+  }, [p.entry, p.tp, p.sl]);
   const back = useSwipe({ onRight: onClose });
 
   return (
@@ -327,9 +349,16 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
               </Press>
               <Press feel="heavy" className="flex-1"
                      onClick={() => {
-                       if (ask.kind === "entry") moveEntry(p.id, ask.price);
-                       else if (ask.kind === "tp") updateLevels(p.id, ask.price, 0);
-                       else updateLevels(p.id, 0, ask.price);
+                       const { kind, price: want } = ask;
+                       setMoved((m) => ({ ...m, [kind]: want }));
+                       const run = kind === "entry" ? moveEntry(p.id, want)
+                                 : kind === "tp" ? updateLevels(p.id, want, 0)
+                                 : updateLevels(p.id, 0, want);
+                       // Отказ биржи не имеет права остаться нарисованным: линия
+                       // вернётся туда, где заявка стоит на самом деле.
+                       void run.then((ok) => {
+                         if (!ok) setMoved((m) => { const n = { ...m }; delete n[kind]; return n; });
+                       });
                        haptic.ok(); setAsk(null);
                      }}>
                 <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
@@ -379,24 +408,27 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
  * лесенки ручек не получают: переставить одну ступень значит пересобрать всю
  * лесенку, а это другая операция, и делается она схемой выхода.
  */
-function useLevels(p: Position, pending: boolean): Level[] {
+function useLevels(p: Position, pending: boolean,
+                   moved: Partial<Record<Level["kind"], number>> = {}): Level[] {
+  const key = JSON.stringify(moved);
   return useMemo(() => {
     const g = cssVar("--green", "#30d158"), r = cssVar("--red", "#ff453a");
     const gray = cssVar("--label-2", "#8e8e93"), o = cssVar("--orange", "#ff9f0a");
+    const at = (kind: Level["kind"], v: number) => moved[kind] ?? v;
     const legs = p.tps?.length ? p.tps : [{ price: p.tp, weight: 1 }];
     const out: Level[] = [
-      { kind: "entry", price: p.entry, title: pending ? "лимитка" : "вход",
+      { kind: "entry", price: at("entry", p.entry), title: pending ? "лимитка" : "вход",
         color: gray, drag: pending },
     ];
     legs.filter((l) => l.price > 0).forEach((l, i) => out.push({
-      kind: i === 0 ? "tp" : "leg", price: l.price,
+      kind: i === 0 ? "tp" : "leg", price: i === 0 ? at("tp", l.price) : l.price,
       title: legs.length > 1 ? `TP${i + 1} ${Math.round(l.weight * 100)}%` : "TP",
       color: g, drag: i === 0 && !pending,
     }));
-    out.push({ kind: "sl", price: p.sl, title: "SL", color: r, drag: !pending });
+    out.push({ kind: "sl", price: at("sl", p.sl), title: "SL", color: r, drag: !pending });
     if (p.be) out.push({ kind: "be", price: p.be, title: "БУ", color: o });
     return out;
-  }, [p.entry, p.tp, p.sl, p.be, JSON.stringify(p.tps), pending]);
+  }, [p.entry, p.tp, p.sl, p.be, JSON.stringify(p.tps), pending, key]);
 }
 
 function Legend({ color, text }: { color: string; text: string }) {
@@ -449,22 +481,33 @@ function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
 }) {
   const tk = useTickers([p.symbol])[p.symbol];
   const [tools, setTools] = useState(false);
-  return (
+  /* ВЫНОСИМ В КОРЕНЬ. Карточка позиции живёт внутри <main>, у которого свой
+     слой (z-10), и любой z-index внутри него этот потолок не пробивает: панель
+     вкладок — сосед main, и она ложилась поверх «полноэкранного» графика,
+     срезая ось времени. Полный экран обязан быть полным. */
+  return portal(
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
       className="fixed inset-0 z-[80] flex flex-col"
       style={{ background: "var(--bg)", paddingTop: "var(--safe-t)", paddingBottom: "var(--safe-b)" }}>
 
+      {/* Заголовок: слева — что за монета, справа — органы управления.
+          Левая часть ОБЯЗАНА сжиматься (min-w-0 + truncate), а правая — нет.
+          Без этого длинный тикер вместе с ценой и процентом раздували строку
+          шире экрана, и кнопка закрытия уезжала за правый край: график
+          открывался, а выйти из него было нечем. */}
       <div className="flex items-center gap-2 px-3 py-2 hairline">
-        <span className="text-[16px] font-semibold">{p.symbol}</span>
-        <AlgoTag source={p.source} />
-        <span className="text-[15px] tabular-nums" style={{ color: "var(--label)" }}>{price(p.mark)}</span>
-        {tk && (
-          <span className="text-[13px] font-semibold"
-                style={{ color: tk.pct24h >= 0 ? "var(--green)" : "var(--red)" }}>{pct(tk.pct24h)}</span>
-        )}
-        <span className="ml-auto flex items-center gap-1.5">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-[16px] font-semibold truncate">{p.symbol}</span>
+          <AlgoTag source={p.source} />
+          <span className="text-[15px] tabular-nums shrink-0" style={{ color: "var(--label)" }}>{price(p.mark)}</span>
+          {tk && (
+            <span className="text-[13px] font-semibold shrink-0"
+                  style={{ color: tk.pct24h >= 0 ? "var(--green)" : "var(--red)" }}>{pct(tk.pct24h)}</span>
+          )}
+        </div>
+        <span className="shrink-0 flex items-center gap-1.5">
           <LensButton lens={lens} onLens={onLens} />
           <Press onClick={() => { haptic.tap(); setTools(true); }} scale={0.9}>
             <span className="flex items-center justify-center w-9 h-9 rounded-full glass glass-flat">
@@ -509,6 +552,6 @@ function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
       </div>
 
       <PaneSheet open={tools} onClose={() => setTools(false)} panes={panes} onPanes={onPanes} />
-    </motion.div>
+    </motion.div>,
   );
 }

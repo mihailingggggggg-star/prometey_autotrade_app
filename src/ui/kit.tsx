@@ -1,7 +1,27 @@
 import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { haptic } from "../lib/tg";
+import { LogoMark } from "./Logo";
+
+/** Вынести разметку из-под текущего поддерева в корень приложения.
+ *
+ *  Без этого `position: fixed` внутри карточки позиции или закрытой сделки
+ *  считается НЕ ОТ ЭКРАНА. Причина в CSS: элемент с `transform` (а карточка
+ *  въезжает анимацией, то есть transform у неё есть) становится containing
+ *  block для всех fixed-потомков. Лист и модалка от этого приклеивались к
+ *  карточке, уезжали вместе с её прокруткой и оказывались под её же слоями —
+ *  снаружи это выглядело как «шторка застряла и не закрывается». То же самое
+ *  ломало подтверждение переноса уровня: модалка появлялась там, где её не
+ *  видно, и жест выглядел как «линия не зафиксировалась».
+ *
+ *  Цель — `#root`, а НЕ `body`: на десктопе приложение живёт в рамке телефона,
+ *  и всплывшее в body ушло бы за её пределы. */
+export function portal(node: ReactNode) {
+  const host = typeof document === "undefined" ? null : document.getElementById("root");
+  return host ? createPortal(node, host) : node;
+}
 
 /* Пружина одна на всё приложение: разные кривые в соседних элементах читаются
    как разное качество сборки. Значения — «упругий отскок» без перелёта. */
@@ -38,10 +58,23 @@ export function Glass({ children, className = "", flat, style }: {
   return <div className={`glass ${flat ? "glass-flat" : ""} ${className}`} style={style}>{children}</div>;
 }
 
-export function Title({ children, sub }: { children: ReactNode; sub?: ReactNode }) {
+/** Заголовок экрана со знаком.
+ *
+ *  Знак стоит СПРАВА и мельче заголовка: слева он спорил бы с первым словом за
+ *  начало строки, а крупнее — за роль главного на экране. Его работа тут —
+ *  сказать, в каком приложении вы находитесь, и замолчать. Один и тот же на
+ *  всех четырёх вкладках: марка, которая меняется от экрана к экрану, марку не
+ *  создаёт. `mark={false}` — там, где знак уже есть рядом (экран входа). */
+export function Title({ children, sub, mark = true }:
+                      { children: ReactNode; sub?: ReactNode; mark?: boolean }) {
   return (
     <div className="px-5 pt-1 pb-3">
-      <h1 className="text-[34px] font-bold tracking-[-0.03em] leading-tight">{children}</h1>
+      <div className="flex items-start gap-3">
+        <h1 className="text-[34px] font-bold tracking-[-0.03em] leading-tight flex-1 min-w-0">
+          {children}
+        </h1>
+        {mark && <LogoMark size={26} className="shrink-0 mt-1.5" style={{ opacity: 0.92 }} />}
+      </div>
       {sub && <p className="text-[15px] mt-0.5" style={{ color: "var(--label-2)" }}>{sub}</p>}
     </div>
   );
@@ -88,10 +121,10 @@ export function Sheet({
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  return (
+  return portal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end">
+        <div className="fixed inset-0 z-[70] flex items-end">
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={onClose}
@@ -150,10 +183,10 @@ export function Sheet({
 export function Modal({
   open, onClose, children, dismissable = true,
 }: { open: boolean; onClose: () => void; children: ReactNode; dismissable?: boolean }) {
-  return (
+  return portal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-5">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-5">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => dismissable && onClose()}
             className="absolute inset-0"

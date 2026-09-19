@@ -15,6 +15,7 @@ import { ConnectCard } from "./Connect";
 import type { Ticker } from "../lib/market";
 
 import { money, pct, price, ago, plural, rr } from "../lib/format";
+import { windowStart } from "../lib/stats";
 import type { Tab } from "../nav/TabBar";
 
 type Period = "d" | "w" | "m" | "all";
@@ -43,7 +44,12 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
 
   const stat = useMemo(() => {
     const days = PERIODS.find((p) => p.id === period)!.days;
-    const from = Date.now() - days * 864e5;
+    /* Границы — по КАЛЕНДАРНЫМ суткам Бишкека, как в аналитике и у бота.
+       Здесь оставалось скользящее окно: «Сегодня» на главной показывало
+       последние 24 часа, то есть половину вчерашнего дня в придачу, и не
+       сходилось с той же строкой на вкладке «Аналитика». Две разные правды
+       про один день — худшее, что может показывать торговый отчёт. */
+    const from = windowStart(days);
     const rows = trades.filter((t) => t.closedAt >= from);
     const wins = rows.filter((r) => r.pnl > 0);
     const loss = rows.filter((r) => r.pnl < 0);

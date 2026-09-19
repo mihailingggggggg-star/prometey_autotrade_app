@@ -105,6 +105,9 @@ export function LinePlot({ data, height = 140, color, fmt, xfmt, zero }: {
 
 /** Столбики. Годится и для значений со знаком (прибыль по дням), и для
  *  количеств (сделок в день, распределение R). */
+/** Сколько пикселей занимает подпись оси («17 сент.» кеглем 9) с воздухом. */
+const LABEL_PX = 42;
+
 export function BarPlot({ data, height = 140, fmt, good }: {
   data: { label: string; y: number; good?: boolean }[]; height?: number;
   fmt: (v: number) => string; good?: string;
@@ -151,16 +154,35 @@ export function BarPlot({ data, height = 140, fmt, good }: {
                   fill={c} opacity={hi == null || hi === i ? 1 : 0.42} />
           );
         })}
-        {/* Подписи по оси — когда столбиков мало. У восьми они читаются, у
-            тридцати превратились бы в серую кашу, и там их роль берёт на себя
-            подпись под пальцем. Один столбик без подписи вообще читается как
-            сбой отрисовки, а не как «данные за один день». */}
-        {data.length <= 8 && data.map((d, i) => (
-          <text key={i} x={PAD.l + i * step + step / 2} y={height - 3}
-                textAnchor="middle" fontSize="9" fill="var(--label-3)">
-            {d.label.length > 9 ? `${d.label.slice(0, 8)}…` : d.label}
-          </text>
-        ))}
+        {/* Подписи по оси ПРОРЕЖИВАЮТСЯ по месту, а не отключаются по числу
+            столбиков. Порог «не больше восьми» врал в обе стороны: восемь
+            подписей «17 сент.» на узком экране всё равно налезали друг на
+            друга, а тридцать столбиков оставались вообще без оси — хотя
+            каждая пятая подпись там и читается, и нужна. Последнюю показываем
+            всегда: край шкалы — единственная опора, по которой видно, чем
+            период заканчивается. */}
+        {(() => {
+          const every = Math.max(1, Math.ceil(LABEL_PX / step));
+          return data.map((d, i) => {
+            if (i % every !== 0 && i !== data.length - 1) return null;
+            // Предпоследняя подпись вплотную к последней — лишняя.
+            if (i !== data.length - 1 && data.length - 1 - i < every * 0.7) return null;
+            /* Крайние подписи ПРИЖИМАЕМ к краю, а не центрируем по столбику.
+               Центрированная у края вылезает за пределы svg и обрезается им:
+               «13 сент.» превращалось в «3 сент.», то есть подпись не просто
+               портилась, а начинала врать про дату. */
+            const cx = PAD.l + i * step + step / 2;
+            const half = LABEL_PX / 2;
+            const anchor = cx - half < 1 ? "start" : cx + half > w - 1 ? "end" : "middle";
+            const x = anchor === "start" ? 1 : anchor === "end" ? w - 1 : cx;
+            return (
+              <text key={i} x={x} y={height - 3}
+                    textAnchor={anchor} fontSize="9" fill="var(--label-3)">
+                {d.label.length > 9 ? `${d.label.slice(0, 8)}…` : d.label}
+              </text>
+            );
+          });
+        })()}
       </svg>
       {cur && (
         <div className="absolute top-0 px-2 py-[3px] rounded-[9px] text-[11px] font-semibold

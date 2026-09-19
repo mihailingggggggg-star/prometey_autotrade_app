@@ -566,7 +566,12 @@ export function TradeChart({
       const was = levels.find((x) => x.kind === d.kind)?.price || 0;
       // Мазок в пару пикселей — это промах, а не заявка: отправлять на биржу
       // «перенос» на нулевое расстояние незачем.
-      if (Math.abs(d.price - was) > was * 0.0002) { onLevel(d.kind, d.price); setArmed(null); }
+      //
+      // Уровень при этом ОСТАЁТСЯ взятым. Раньше ручка снималась после первого
+      // же переноса, и чтобы поправить стоп ещё раз, приходилось заново искать
+      // и тапать линию — а правят их как раз подряд, подводя к месту. Снять
+      // ручку по-прежнему можно повторным тапом по линии.
+      if (Math.abs(d.price - was) > was * 0.0002) onLevel(d.kind, d.price);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

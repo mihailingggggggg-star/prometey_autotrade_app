@@ -15,7 +15,8 @@ import { useEffect, useState } from "react";
 import { BellRing, Info, ShieldAlert, TrendingUp } from "lucide-react";
 import { Glass, Press, Row, Sheet, Toggle } from "../ui/kit";
 import { haptic } from "../lib/tg";
-import { available, denied, readPrefs, setKind, type PushKind, type PushPrefs } from "../lib/push";
+import { available, probe, readPrefs, setKind,
+         type PushKind, type PushPrefs, type PushStatus } from "../lib/push";
 
 export function NotifyRow() {
   const [open, setOpen] = useState(false);
@@ -40,37 +41,62 @@ function NotifySheet({ open, onClose, prefs, onPrefs }: {
   open: boolean; onClose: () => void; prefs: PushPrefs; onPrefs: (p: PushPrefs) => void;
 }) {
   const [busy, setBusy] = useState<PushKind | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [status, setStatus] = useState<PushStatus>("default");
 
-  useEffect(() => { if (open) onPrefs(readPrefs()); }, [open]);
+  /* Состояние канала перечитываем при открытии И при возврате в приложение.
+     Разрешение меняют в настройках системы, не закрывая приложение: застывший
+     ответ показывал бы «запрещено» тому, кто только что всё разрешил — ровно
+     на это и жаловались. */
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const refresh = () => {
+      onPrefs(readPrefs());
+      void probe().then((s) => { if (alive) setStatus(s); });
+    };
+    refresh();
+    const vis = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { alive = false; document.removeEventListener("visibilitychange", vis); };
+  }, [open]);
 
   const flip = async (kind: PushKind, v: boolean) => {
-    setBusy(kind); setFailed(false);
-    const next = await setKind(kind, v);
+    setBusy(kind);
+    const { prefs: next, reason } = await setKind(kind, v);
     setBusy(null);
     onPrefs(next);
-    /* Тумблер не «сделал вид»: если система или бот отказали, он возвращается
-       и рядом появляется объяснение. Молча вернувшийся тумблер читается как
-       сломанный интерфейс. */
-    if (v && !next[kind]) { setFailed(true); haptic.warn(); } else haptic.select();
+    setStatus(reason);
+    /* Тумблер не «сделал вид»: если система отказала, он возвращается и рядом
+       появляется объяснение — но именно то, которое годится. */
+    if (v && !next[kind]) haptic.warn(); else haptic.select();
   };
 
-  const can = available() && !denied();
+  const can = status !== "unsupported" && status !== "denied";
 
   return (
     <Sheet open={open} onClose={onClose} title="Уведомления">
       <div className="pb-3 space-y-2.5">
-        {!available() && (
+        {status === "unsupported" && (
           <Glass flat className="p-3.5 text-[13px] leading-snug" style={{ color: "var(--label-2)" }}>
             В этом окне уведомления невозможны. Они работают у ярлыка на рабочем
             столе: добавьте приложение на экран — строка «Ярлык на экране
             смартфона» чуть выше — и включите их оттуда.
           </Glass>
         )}
-        {denied() && (
+        {status === "denied" && (
           <Glass flat className="p-3.5 text-[13px] leading-snug" style={{ color: "var(--orange)" }}>
             Уведомления запрещены в настройках телефона. Включить их отсюда уже
-            нельзя — только в настройках системы для этого приложения.
+            нельзя — только в настройках системы для этого приложения. Разрешите
+            там и вернитесь: экран обновится сам.
+          </Glass>
+        )}
+        {/* Телефон готов, а отправлять некому. Винить в этом телефон — значит
+            отправить человека чинить исправное. */}
+        {status === "no-server" && (
+          <Glass flat className="p-3.5 text-[13px] leading-snug" style={{ color: "var(--orange)" }}>
+            Телефон разрешил уведомления, но бот пока не настроен на отправку —
+            владельцу нужно прописать ключи на сервере. Ваш выбор сохранён:
+            уведомления начнут приходить сами, как только канал заработает.
           </Glass>
         )}
 
@@ -89,13 +115,6 @@ function NotifySheet({ open, onClose, prefs, onPrefs }: {
                 onChange={(v) => void flip("news", v)} />
         </Glass>
 
-        {failed && (
-          <p className="text-[12px] px-1 leading-snug" style={{ color: "var(--orange)" }}>
-            Не удалось включить: телефон не дал разрешения либо бот пока не
-            настроен на отправку. Настройки телефона → уведомления — там можно
-            разрешить вручную.
-          </p>
-        )}
         <p className="text-[12px] px-1 leading-snug" style={{ color: "var(--label-2)" }}>
           Уведомления приходят на это устройство. На другом телефоне их нужно
           включить отдельно — подписка принадлежит устройству, а не счёту.

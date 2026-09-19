@@ -194,8 +194,21 @@ export function TabBar({ tab, onTab, badge }: {
   );
 
   return (
-    <nav className="fixed left-0 right-0 z-40 px-1.5 pointer-events-none"
-         style={{ bottom: "calc(var(--safe-b) + 8px)" }}>
+    <>
+      {/* Затемнение под панелью. Панель полупрозрачная, и содержимое,
+          проезжающее под её нижним краем, раньше упиралось в голый фон —
+          строка обрывалась ровно на границе, как обрезанная. Градиент даёт
+          этому краю мягкое дно и заодно отделяет панель от контента, не
+          заливая его плашкой. Жесты сквозь него проходят. */}
+      <div className="fixed left-0 right-0 bottom-0 z-30 pointer-events-none"
+           style={{ height: "calc(var(--tabbar-h) + var(--safe-b) + 34px)",
+                    background: "linear-gradient(to top, var(--bg) 8%, "
+                              + "color-mix(in srgb, var(--bg) 72%, transparent) 46%, transparent 100%)" }} />
+      {/* Панель опущена ниже: между ней и нижней кромкой оставалось восемь
+          пикселей сверх системного отступа, и на телефонах без физической
+          кнопки она висела заметно выше, чем ожидается от нижней навигации. */}
+      <nav className="fixed left-0 right-0 z-40 px-1.5 pointer-events-none"
+           style={{ bottom: "calc(var(--safe-b) * 0.45 + 2px)" }}>
       {/* Обёртка НЕ обрезает содержимое: в ней лежат и панель, и линза.
           Панель обрезает себя сама (у неё скругление и фон), а линза —
           снаружи, поэтому в полёте ей есть куда вырасти. Пока она лежала
@@ -260,6 +273,7 @@ export function TabBar({ tab, onTab, badge }: {
         </motion.div>
       </div>
     </nav>
+    </>
   );
 }
 
