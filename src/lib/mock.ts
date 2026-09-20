@@ -41,6 +41,10 @@ export type Trade = {
    *  их больше (tp, flat, expired, canceled, venue), и новый код в журнале не
    *  должен ронять экран истории. */
   reason: string;
+  /** Человеческое имя причины — считает СЕРВЕР. Причины выхода придумывает
+   *  контур на стороне скринера, и второй их словарь здесь отставал бы ровно на
+   *  один релиз мини-аппа, печатая владельцу «cmd:WHALE_AGAINST». */
+  reasonRu?: string;
   closedAt: number; heldMin: number; fee: number; mfe: number; mae: number; scenario: string;
   source?: "screener" | "algo" | "hunter";
 };

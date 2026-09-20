@@ -122,7 +122,8 @@ function toPosition(p: ApiPosition, mark: number): M.Position {
 function toTrade(t: ApiTrade): M.Trade {
   return {
     id: t.id, symbol: t.symbol, side: t.side, entry: t.entry, exit: t.exit,
-    pnl: t.pnl, r: t.r, reason: t.reason, closedAt: t.closedAt || 0,
+    pnl: t.pnl, r: t.r, reason: t.reason, reasonRu: t.reasonRu,
+    closedAt: t.closedAt || 0,
     heldMin: t.heldMin, fee: t.fee, mfe: t.mfe, mae: t.mae, scenario: t.scenario,
     source: t.source,
   };

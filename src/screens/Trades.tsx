@@ -52,8 +52,13 @@ const REASON: Record<string, { t: string; c: string }> = {
   venue: { t: "счёт сменил биржу", c: "var(--label-2)" },
   flat: { t: "закрыто вне уровней", c: "var(--label-2)" },
 };
-/** Незнакомый код — не повод ломать строку: показываем как есть. */
-const reasonOf = (code: string) => REASON[code] || { t: code, c: "var(--label-2)" };
+/** Незнакомый код — не повод ломать строку: показываем как есть.
+ *
+ *  Имя с сервера (`reasonRu`) главнее локального словаря: выход по РЕШЕНИЮ
+ *  контура («кит встал против позиции») приходит кодом, которого здесь нет и не
+ *  должно быть — словарь причин принадлежит контуру, а не экрану. */
+const reasonOf = (code: string, ru?: string) =>
+  REASON[code] || { t: ru || code, c: "var(--label-2)" };
 
 export function Trades() {
   const { trades } = useApp();
@@ -144,7 +149,7 @@ export function Trades() {
 }
 
 function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: () => void }) {
-  const r = reasonOf(t.reason);
+  const r = reasonOf(t.reason, t.reasonRu);
   return (
     <Glass flat className="overflow-hidden">
       <Press onClick={onToggle} className="block w-full" scale={0.985}>

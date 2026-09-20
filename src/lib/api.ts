@@ -140,7 +140,7 @@ export type ApiPosition = {
 export type ApiTrade = {
   id: string; symbol: string; side: "long" | "short";
   entry: number; exit: number; pnl: number; r: number;
-  reason: string; closedAt: number; heldMin: number; fee: number;
+  reason: string; reasonRu?: string; closedAt: number; heldMin: number; fee: number;
   mfe: number; mae: number; scenario: string; score: number; whale: boolean;
   entryType: "market" | "limit"; lev: number; risk: number; hits: number | null;
   source?: Source;
