@@ -102,7 +102,17 @@ export function dropSession() {
  *  это уровень, живущий часами и закрывающийся ценой; у алгоса — состояние
  *  ленты, живущее минуты и закрывающееся тем, что состояние кончилось.
  *  Смешивать их результаты в одну статистику значит не измерить ни один. */
-export type Source = "screener" | "algo";
+export type Source = "screener" | "algo" | "hunter";
+
+/** Что показывать: «обычный режим» (скринер + контур охоты) или «алгос».
+ *
+ *  Разделение НЕ по числу контуров, а по СРАВНИМОСТИ. Сделка контура охоты
+ *  живёт часами и закрывается ценой — её можно класть в один винрейт со
+ *  сделкой скринера. Алгос закрывает сделку за минуты и не по цене, а потому
+ *  что подпись погасла, и делает их кратно больше: в общей куче он переписывает
+ *  собой винрейт, среднюю длительность и число сделок, и цифры перестают
+ *  описывать хоть что-нибудь одно. */
+export type Contour = "normal" | "algo";
 
 export type ApiPosition = {
   id: string; symbol: string; side: "long" | "short"; lev: number;
@@ -116,17 +126,22 @@ export type ApiPosition = {
   notional: number; margin: number; marginFrom: string;
   status: "pending" | "open"; entryType: "market" | "limit";
   score: number; whale: boolean; upl?: number;
-  /** Контур сделки: `screener` — сигнал воронки скринера, `algo` — режим
-   *  чтения тиковой ленты. Поле может не прийти со старого бота — тогда это
-   *  скринер, а не «неизвестно». */
+  /** Контур сделки: `hunter` — собственный отбор монет автотрейда, `algo` —
+   *  чтение тиковой ленты, `screener` — сигнал воронки скринера (таких сделок
+   *  система больше не открывает). Поле может не прийти со старого бота —
+   *  тогда это скринер, а не «неизвестно». */
   source?: Source;
+  /** ПО КАКОМУ СЦЕНАРИЮ вошли. Сторона и монета отвечают «что и куда», а
+   *  сценарий — «почему мы здесь»: пять сетапов контура ведутся по-разному и
+   *  закрываются по разным причинам. */
+  scenario?: string;
 };
 
 export type ApiTrade = {
   id: string; symbol: string; side: "long" | "short";
   entry: number; exit: number; pnl: number; r: number;
   reason: string; closedAt: number; heldMin: number; fee: number;
-  mfe: number; mae: number; scheme: string; score: number; whale: boolean;
+  mfe: number; mae: number; scenario: string; score: number; whale: boolean;
   entryType: "market" | "limit"; lev: number; risk: number; hits: number | null;
   source?: Source;
 };
@@ -202,16 +217,18 @@ export const getMe = (s?: AbortSignal) => get<ApiMe>("/api/me", s);
 export const getState = (s?: AbortSignal) => get<ApiState>("/api/state", s);
 export const getPositions = (s?: AbortSignal) =>
   get<{ positions: ApiPosition[]; mode: string; ts: number }>("/api/positions", s);
-export const getTrades = (days = 0, s?: AbortSignal) =>
-  get<{ trades: ApiTrade[]; mode: string }>(`/api/trades?days=${days}&limit=500`, s);
+export const getTrades = (days = 0, contour: Contour = "normal", s?: AbortSignal) =>
+  get<{ trades: ApiTrade[]; mode: string; source: Contour }>(
+    `/api/trades?days=${days}&limit=500&source=${contour}`, s);
 
 export type ApiSignal = {
   id: string; symbol: string; side: "long" | "short"; score: number; whale: boolean;
   at: number; status: string; entryType: "market" | "limit"; source?: Source;
   pnl: number | null; r: number | null;
 };
-export const getSignals = (s?: AbortSignal) =>
-  get<{ signals: ApiSignal[]; mode: string }>("/api/signals", s);
+export const getSignals = (contour: Contour = "normal", s?: AbortSignal) =>
+  get<{ signals: ApiSignal[]; mode: string; source: Contour }>(
+    `/api/signals?source=${contour}`, s);
 
 export type ApiPayment = {
   id: string; at: number; kind: string; amount: number; note: string; status: string;

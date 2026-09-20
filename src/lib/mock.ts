@@ -16,6 +16,9 @@ export type Position = {
   id: string; symbol: string; side: Side; lev: number;
   entry: number; mark: number; sl: number; tp: number; be?: number;
   size: number; risk: number; openedAt: number; scheme: string;
+  /** По какому сценарию контур вошёл. Сторона и монета отвечают «что и куда»,
+   *  а сценарий — «почему мы здесь». */
+  scenario?: string;
   /** Размер в долларах и замороженная маржа. Монеты человеку ни о чём не
    *  говорят: вопрос всегда «сколько денег в позиции». */
   notional?: number; margin?: number; marginFrom?: string;
@@ -28,7 +31,7 @@ export type Position = {
   /** pending — лимитка выставлена, но ещё не налилась: позиции физически нет. */
   status?: "pending" | "open";
   /** Контур: скринер или «алгос» (чтение тиковой ленты). Отсутствует = скринер. */
-  source?: "screener" | "algo";
+  source?: "screener" | "algo" | "hunter";
 };
 
 export type Trade = {
@@ -38,8 +41,8 @@ export type Trade = {
    *  их больше (tp, flat, expired, canceled, venue), и новый код в журнале не
    *  должен ронять экран истории. */
   reason: string;
-  closedAt: number; heldMin: number; fee: number; mfe: number; mae: number; scheme: string;
-  source?: "screener" | "algo";
+  closedAt: number; heldMin: number; fee: number; mfe: number; mae: number; scenario: string;
+  source?: "screener" | "algo" | "hunter";
 };
 
 export type Signal = {
@@ -106,35 +109,35 @@ export function buildPosition(s: PosSpec, last: number): Position {
 
 export const trades: Trade[] = [
   { id: "t1", symbol: "GRIFFAINUSDT", side: "short", entry: 0.01431, exit: 0.013578, pnl: 14.56, r: 1.45,
-    reason: "tp_all", closedAt: now - 11 * h, heldMin: 833, fee: 0.27, mfe: 2.86, mae: -0.11, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 11 * h, heldMin: 833, fee: 0.27, mfe: 2.86, mae: -0.11, scenario: "s3 · нож" },
   { id: "t2", symbol: "BLURUSDT", side: "long", entry: 0.017677, exit: 0.017681, pnl: -0.31, r: -0.03,
-    reason: "be", closedAt: now - 17 * h, heldMin: 833, fee: 0.31, mfe: 1.44, mae: -1.01, scheme: "1.5R · БУ 1R" },
+    reason: "be", closedAt: now - 17 * h, heldMin: 833, fee: 0.31, mfe: 1.44, mae: -1.01, scenario: "s5 · шорт в памп" },
   { id: "t3", symbol: "DGAIUSDT", side: "long", entry: 0.6888, exit: 0.7238, pnl: 14.50, r: 1.45,
-    reason: "tp_all", closedAt: now - 22 * h, heldMin: 166, fee: 0.29, mfe: 2.32, mae: -0.03, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 22 * h, heldMin: 166, fee: 0.29, mfe: 2.32, mae: -0.03, scenario: "s1 · старт пампа" },
   { id: "t4", symbol: "BTRUSDT", side: "short", entry: 0.05679, exit: 0.05803, pnl: -10.57, r: -1.05,
-    reason: "sl", closedAt: now - 23 * h, heldMin: 61, fee: 0.26, mfe: 3.60, mae: -1.05, scheme: "1.5R · БУ 1R" },
+    reason: "sl", closedAt: now - 23 * h, heldMin: 61, fee: 0.26, mfe: 3.60, mae: -1.05, scenario: "s5 · шорт в памп" },
   { id: "t5", symbol: "SENTUSDT", side: "long", entry: 0.015638, exit: 0.014695, pnl: -9.25, r: -0.93,
-    reason: "sl", closedAt: now - 36 * h, heldMin: 1185, fee: 0.3, mfe: 0.26, mae: -1.35, scheme: "1.5R · БУ 1R" },
+    reason: "sl", closedAt: now - 36 * h, heldMin: 1185, fee: 0.3, mfe: 0.26, mae: -1.35, scenario: "s5 · шорт в памп" },
   { id: "t6", symbol: "ARBUSDT", side: "short", entry: 0.15114, exit: 0.15119, pnl: -0.28, r: -0.03,
-    reason: "be", closedAt: now - 38 * h, heldMin: 166, fee: 0.28, mfe: 1.11, mae: -1.12, scheme: "1.5R · БУ 1R" },
+    reason: "be", closedAt: now - 38 * h, heldMin: 166, fee: 0.28, mfe: 1.11, mae: -1.12, scenario: "s5 · шорт в памп" },
   { id: "t7", symbol: "TUSDT", side: "long", entry: 0.004941, exit: 0.005541, pnl: 14.47, r: 1.45,
-    reason: "tp_all", closedAt: now - 52 * h, heldMin: 740, fee: 0.3, mfe: 1.58, mae: -0.42, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 52 * h, heldMin: 740, fee: 0.3, mfe: 1.58, mae: -0.42, scenario: "s5 · шорт в памп" },
   { id: "t8", symbol: "BIGTIMEUSDT", side: "long", entry: 0.007347, exit: 0.00715, pnl: -10.53, r: -1.06,
-    reason: "sl", closedAt: now - 57 * h, heldMin: 300, fee: 0.25, mfe: 0.85, mae: -1.05, scheme: "1.5R · БУ 1R" },
+    reason: "sl", closedAt: now - 57 * h, heldMin: 300, fee: 0.25, mfe: 0.85, mae: -1.05, scenario: "s5 · шорт в памп" },
   { id: "t9", symbol: "ONDOUSDT", side: "short", entry: 0.3525, exit: 0.3558, pnl: -11.16, r: -1.10,
-    reason: "sl", closedAt: now - 71 * h, heldMin: 440, fee: 0.32, mfe: 0.71, mae: -1.93, scheme: "1.5R · БУ 1R" },
+    reason: "sl", closedAt: now - 71 * h, heldMin: 440, fee: 0.32, mfe: 0.71, mae: -1.93, scenario: "s5 · шорт в памп" },
   { id: "t10", symbol: "REZUSDT", side: "short", entry: 0.005005, exit: 0.004599, pnl: 14.46, r: 1.45,
-    reason: "tp_all", closedAt: now - 84 * h, heldMin: 155, fee: 0.29, mfe: 2.45, mae: -0.57, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 84 * h, heldMin: 155, fee: 0.29, mfe: 2.45, mae: -0.57, scenario: "s5 · шорт в памп" },
   { id: "t11", symbol: "PUFFERUSDT", side: "long", entry: 0.01912, exit: 0.02248, pnl: 14.50, r: 1.45,
-    reason: "tp_all", closedAt: now - 96 * h, heldMin: 1745, fee: 0.31, mfe: 1.78, mae: -0.63, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 96 * h, heldMin: 1745, fee: 0.31, mfe: 1.78, mae: -0.63, scenario: "s5 · шорт в памп" },
   { id: "t12", symbol: "RIVERUSDT", side: "short", entry: 1.266, exit: 1.2467, pnl: 15.08, r: 1.45,
-    reason: "tp_all", closedAt: now - 130 * h, heldMin: 15, fee: 0.34, mfe: 8.57, mae: -0.62, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 130 * h, heldMin: 15, fee: 0.34, mfe: 8.57, mae: -0.62, scenario: "s5 · шорт в памп" },
   { id: "t13", symbol: "PLUMEUSDT", side: "long", entry: 0.01288, exit: 0.013475, pnl: 14.34, r: 1.45,
-    reason: "tp_all", closedAt: now - 134 * h, heldMin: 360, fee: 0.28, mfe: 1.89, mae: -0.85, scheme: "1.5R · БУ 1R" },
+    reason: "tp_all", closedAt: now - 134 * h, heldMin: 360, fee: 0.28, mfe: 1.89, mae: -0.85, scenario: "s5 · шорт в памп" },
   { id: "t14", symbol: "ANIMEUSDT", side: "long", entry: 0.002953, exit: 0.002951, pnl: -0.26, r: -0.03,
-    reason: "be", closedAt: now - 141 * h, heldMin: 9015, fee: 0.26, mfe: 1.34, mae: -1.07, scheme: "1.5R · БУ 1R" },
+    reason: "be", closedAt: now - 141 * h, heldMin: 9015, fee: 0.26, mfe: 1.34, mae: -1.07, scenario: "s5 · шорт в памп" },
   { id: "t15", symbol: "EIGENUSDT", side: "short", entry: 0.2223, exit: 0.2253, pnl: -10.82, r: -1.07,
-    reason: "sl", closedAt: now - 151 * h, heldMin: 145, fee: 0.33, mfe: 3.08, mae: -1.43, scheme: "1.5R · БУ 1R" },
+    reason: "sl", closedAt: now - 151 * h, heldMin: 145, fee: 0.33, mfe: 3.08, mae: -1.43, scenario: "s5 · шорт в памп" },
 ];
 
 export const signals: Signal[] = [

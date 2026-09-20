@@ -86,6 +86,18 @@ type Ctx = {
   signals: M.Signal[];
   payments: M.Payment[];
   riskAlert: boolean;       // риск > 5% депозита
+
+  /* ИСТОЧНИК АНАЛИТИКИ И ЖУРНАЛА. «Обычный режим» — сделки контура охоты и
+     скринера, «алгос» — отдельно. Цифры двух режимов НИКОГДА не складываются:
+     алгос закрывает сделку за минуты и не по цене, а потому что подпись
+     погасла, и делает их кратно больше — в общей куче он переписывает собой
+     винрейт, среднюю длительность и число сделок.
+
+     ОТКРЫТЫХ ПОЗИЦИЙ ЭТО НЕ КАСАЕТСЯ: они показываются все и всегда, с тегом
+     контура. Это живое состояние счёта, а не аналитика, и знать, что бот
+     держит, владелец должен целиком. */
+  contour: "normal" | "algo";
+  setContour: (c: "normal" | "algo") => void;
 };
 
 /* Ряды бота → модели экранов. Отдельными функциями, а не «типы совпадают,
@@ -98,6 +110,7 @@ function toPosition(p: ApiPosition, mark: number): M.Position {
     sl: p.sl, tp: p.tp, tps: p.tps, be: p.be ?? undefined,
     size: p.size, risk: p.risk, openedAt: p.openedAt, scheme: p.scheme,
     status: p.status, entryType: p.entryType, upl: p.upl, source: p.source,
+    scenario: p.scenario,
     /* Номинал пересчитываем по ЖИВОЙ цене из потока Bybit: серверный считался
        на момент опроса, а цена с тех пор ушла. Маржа — как пришла: она
        заморожена на бирже и от тика не меняется. */
@@ -110,7 +123,7 @@ function toTrade(t: ApiTrade): M.Trade {
   return {
     id: t.id, symbol: t.symbol, side: t.side, entry: t.entry, exit: t.exit,
     pnl: t.pnl, r: t.r, reason: t.reason, closedAt: t.closedAt || 0,
-    heldMin: t.heldMin, fee: t.fee, mfe: t.mfe, mae: t.mae, scheme: t.scheme,
+    heldMin: t.heldMin, fee: t.fee, mfe: t.mfe, mae: t.mae, scenario: t.scenario,
     source: t.source,
   };
 }
@@ -356,6 +369,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return act("entry:" + id, () => API.moveEntry(id, entry));
     },
     trades, signals, payments, riskAlert,
+    contour: server.contour,
+    setContour: server.setContour,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

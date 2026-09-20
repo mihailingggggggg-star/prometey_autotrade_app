@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Maximize2, Search, Share2, X } from "lucide-react";
-import { AlgoTag, Glass, GroupLabel, Press, Segmented, Title, portal, tone } from "../ui/kit";
+import { AlgoTag, Glass, GroupLabel, Press, ScenarioTag, Segmented, Title, portal, tone } from "../ui/kit";
 import { Dash } from "./Dash";
 import { useApp } from "../lib/store";
 import type { Trade } from "../lib/mock";
@@ -57,6 +57,7 @@ const reasonOf = (code: string) => REASON[code] || { t: code, c: "var(--label-2)
 
 export function Trades() {
   const { trades } = useApp();
+  const { contour, setContour } = useApp();
   const [p, setP] = useState<P>("m");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -77,6 +78,20 @@ export function Trades() {
     <div className="pb-2">
       <Title sub="История сделок и статистика">Аналитика</Title>
 
+      {/* ── Источник ──────────────────────────────────────────────────────
+          Два контура считаются РАЗДЕЛЬНО и никогда не складываются в один
+          показатель. Дело не в числе контуров, а в сравнимости: сделка
+          контура охоты живёт часами и закрывается ценой, а алгос — минуты и
+          по угасанию подписи, и делает их кратно больше. В общей куче он
+          переписывает собой винрейт, среднюю длительность и число сделок, и
+          цифры перестают описывать хоть что-нибудь одно. */}
+      <div className="px-4 mb-2">
+        <Segmented value={contour} onChange={setContour} options={[
+          { id: "normal" as const, label: "Обычный режим" },
+          { id: "algo" as const, label: "Алгос" },
+        ]} />
+      </div>
+
       <div className="px-4" data-coach="period">
         <Segmented value={p} onChange={setP} options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
       </div>
@@ -93,7 +108,17 @@ export function Trades() {
       </div>
 
       {/* ── История ────────────────────────────────────────────────────────── */}
-      <GroupLabel>История · {rows.length} {plural(rows.length, "сделка", "сделки", "сделок")}</GroupLabel>
+      <GroupLabel>История · {rows.length} {plural(rows.length, "сделка", "сделки", "сделок")}
+        {contour === "algo" ? " · алгос" : ""}</GroupLabel>
+      {/* Переключатель повторён у списка намеренно: экран длинный, и, докрутив
+          до истории, человек уже не видит верхний — а без него непонятно, чьи
+          это сделки. */}
+      <div className="px-4 mb-2.5">
+        <Segmented size="sm" value={contour} onChange={setContour} options={[
+          { id: "normal" as const, label: "Обычный режим" },
+          { id: "algo" as const, label: "Алгос" },
+        ]} />
+      </div>
       <div className="px-4 mb-2.5">
         <div className="glass glass-flat flex items-center gap-2 px-3.5 py-2.5">
           <Search size={17} style={{ color: "var(--label-2)" }} />
@@ -134,6 +159,8 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
                 {t.side === "long" ? "LONG" : "SHORT"}
               </span>
               <AlgoTag source={t.source} />
+          <ScenarioTag scenario={t.scenario} />
+              <ScenarioTag scenario={t.scenario} />
             </div>
             <div className="text-[12px] mt-0.5" style={{ color: r.c }}>{r.t} · {dt(t.closedAt)}</div>
           </div>
@@ -158,7 +185,7 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
               <D k="В рынке" v={hold(t.heldMin)} />
               <D k="Был в плюсе" v={rr(t.mfe)} c={tone(1)} />
               <D k="Был в минусе" v={rr(t.mae)} c={tone(-1)} />
-              <D k="Схема выхода" v={t.scheme} wide />
+              <D k="Сценарий" v={t.scenario || "—"} wide />
             </div>
             {/* График сделки — по тапу, а не сразу: рисовать его всем строкам
                 списка значило бы тянуть свечи по каждой сделке за месяц. */}
@@ -317,6 +344,7 @@ function ClosedFull({ t, candles, marks, iv, onClose }: {
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="text-[16px] font-semibold truncate">{t.symbol.replace("USDT", "")}</span>
           <AlgoTag source={t.source} />
+          <ScenarioTag scenario={t.scenario} />
           <span className="text-[13px] px-1.5 py-0.5 rounded-md font-semibold shrink-0"
                 style={{ background: "var(--label-3)", color: "var(--label-2)" }}>
             {t.side === "long" ? "LONG" : "SHORT"}

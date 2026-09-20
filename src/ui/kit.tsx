@@ -250,6 +250,23 @@ export const money = (v: number) => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).t
  *
  *  У скринерских сделок тега НЕТ намеренно: их большинство, и подписывать
  *  каждую «скринер» значит добавить шум ради симметрии. */
+export function ScenarioTag({ scenario, className = "" }:
+                            { scenario?: string; className?: string }) {
+  /* ПО КАКОМУ СЦЕНАРИЮ вошли. Сторона и монета отвечают «что и куда», а
+     сценарий — «почему мы здесь»: пять сетапов контура ведутся по-разному и
+     закрываются по разным причинам, и без метки строки выглядят одинаково.
+
+     Приглушённо, а не акцентом: это справка, а не оценка, и спорить за
+     внимание с результатом сделки она не должна. */
+  if (!scenario || scenario === "без сценария") return null;
+  return (
+    <span className={"px-1.5 py-0.5 rounded-md text-[11px] font-medium shrink-0 " + className}
+          style={{ background: "var(--bg-elev)", color: "var(--label-2)" }}>
+      {scenario}
+    </span>
+  );
+}
+
 export function AlgoTag({ source, className = "" }: { source?: string; className?: string }) {
   if (source !== "algo") return null;
   return (

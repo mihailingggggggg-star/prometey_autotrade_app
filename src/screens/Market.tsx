@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
          TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag } from "../ui/kit";
+import { Glass, Modal, Press, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag, ScenarioTag } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
 import { money, price, pct, rr, ago } from "../lib/format";
@@ -72,6 +72,8 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
               {up ? "LONG" : "SHORT"} {p.lev}×
             </span>
             <AlgoTag source={p.source} />
+          <ScenarioTag scenario={p.scenario} />
+            <ScenarioTag scenario={p.scenario} />
             {/* Лимитка ещё не налилась — позиции физически нет, и называть её
                 позицией нельзя: PnL по ней не существует. */}
             {p.status === "pending" && (
@@ -279,7 +281,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                   ? `${p.marginFrom === "расчёт" ? "≈ " : ""}${money(p.margin)}`
                   : "—"} />
             <KV k="Риск на сделку" v={`$${p.risk.toFixed(2)}`} />
-            <KV k="Схема выхода" v={p.scheme} />
+            <KV k="Сценарий" v={p.scenario || "—"} />
             <KV k="Безубыток" v={p.be ? `при ${price(p.be)}` : "не переносим"} last />
           </Glass>
         </div>
@@ -501,6 +503,7 @@ function FullChart({ p, interval, onInterval, onClose, levels, lens, onLens,
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="text-[16px] font-semibold truncate">{p.symbol}</span>
           <AlgoTag source={p.source} />
+          <ScenarioTag scenario={p.scenario} />
           <span className="text-[15px] tabular-nums shrink-0" style={{ color: "var(--label)" }}>{price(p.mark)}</span>
           {tk && (
             <span className="text-[13px] font-semibold shrink-0"
