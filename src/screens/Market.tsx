@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
          TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag, ScenarioTag } from "../ui/kit";
+import { Glass, Modal, Press, Segmented, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag, ScenarioTag } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
-import { money, price, pct, rr, ago } from "../lib/format";
+import { money, price, pct, rr, ago, plural } from "../lib/format";
 import { haptic } from "../lib/tg";
 import { useTickers } from "../lib/useMarket";
 import { INTERVALS, type Interval } from "../lib/market";
@@ -15,9 +15,21 @@ import { AddPaneStrip, LensButton, PaneSheet, readLens, readPanes, saveLens, sav
 import { useSwipe } from "../lib/swipe";
 
 export function Market() {
-  const { positions, feed } = useApp();
+  const { positions, feed, contour, setContour } = useApp();
   const [open, setOpen] = useState<Position | null>(null);
   const live = positions.find((p) => p.id === open?.id) || null;
+
+  /* Переключатель контуров и здесь, а не только в истории: сделка алгоса живёт
+     минуты и закрывается по угасанию подписи — рядом с часовой позицией
+     контура охоты она читается как такая же, хотя ведётся по другим правилам.
+
+     НО СКРЫТОЕ НАЗЫВАЕТСЯ ВСЛУХ. Позиции — это живое состояние счёта, а не
+     аналитика: умолчав про отфильтрованные, экран сказал бы владельцу, что бот
+     держит меньше, чем держит, — а это самая дорогая разновидность вранья,
+     какая тут возможна. Поэтому под списком стоит строка с числом скрытых. */
+  const shown = positions.filter((p) => contour === "algo"
+    ? p.source === "algo" : p.source !== "algo");
+  const hidden = positions.length - shown.length;
 
   return (
     <div className="pb-2">
@@ -25,21 +37,38 @@ export function Market() {
                 : feed === "connecting" ? "подключаемся к бирже…"
                 : "нет связи с биржей — цены могли устареть"}>Позиции</Title>
 
-      {!positions.length && (
+      <div className="px-4 mb-2.5">
+        <Segmented value={contour} onChange={setContour} options={[
+          { id: "normal" as const, label: "Обычный режим" },
+          { id: "algo" as const, label: "Алгос" },
+        ]} />
+      </div>
+
+      {!shown.length && (
         <div className="px-4">
           <Glass className="p-8 text-center">
             <Inbox size={34} className="mx-auto mb-3" style={{ color: "var(--label-3)" }} />
-            <div className="text-[17px] font-semibold">Открытых позиций нет</div>
+            <div className="text-[17px] font-semibold">
+              {positions.length ? "В этом контуре позиций нет" : "Открытых позиций нет"}
+            </div>
             <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
-              Бот ждёт сигнал от скринера. Как только он придёт — позиция появится здесь.
+              {positions.length
+                ? "Бот держит их в другом контуре — переключите сверху."
+                : "Контур пока не нашёл сетапа. Как только найдёт — позиция появится здесь."}
             </p>
           </Glass>
         </div>
       )}
 
       <div className="px-4 space-y-2.5" data-coach="positions">
-        {positions.map((p) => <PositionCard key={p.id} p={p} onOpen={() => setOpen(p)} />)}
+        {shown.map((p) => <PositionCard key={p.id} p={p} onOpen={() => setOpen(p)} />)}
       </div>
+
+      {hidden > 0 && !!shown.length && (
+        <div className="px-4 pt-2.5 text-[13px] text-center" style={{ color: "var(--label-2)" }}>
+          Ещё {hidden} {plural(hidden, "позиция", "позиции", "позиций")} в другом контуре
+        </div>
+      )}
 
       <AnimatePresence>
         {live && <Detail p={live} onClose={() => setOpen(null)} />}
@@ -57,8 +86,12 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
   return (
     <Press onClick={onOpen} className="block w-full" scale={0.975} feel="press">
       <Glass className="p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          {/* Метки ПЕРЕНОСЯТСЯ, а не сжимаются. Каждая из них `shrink-0` — иначе
+              «SHORT 50×» и «лимитка» превратились бы в нечитаемые огрызки, — но
+              в одну строку на телефоне они не влезают, и ряд без переноса
+              уезжал за правый край прямо на результат сделки. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             <span className="flex items-center justify-center w-7 h-7 rounded-full shrink-0"
                   style={{ background: `color-mix(in srgb, ${up ? "var(--green)" : "var(--red)"} 18%, transparent)` }}>
               {up ? <TrendingUp size={15} style={{ color: "var(--green)" }} />
@@ -72,7 +105,6 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
               {up ? "LONG" : "SHORT"} {p.lev}×
             </span>
             <AlgoTag source={p.source} />
-          <ScenarioTag scenario={p.scenario} />
             <ScenarioTag scenario={p.scenario} />
             {/* Лимитка ещё не налилась — позиции физически нет, и называть её
                 позицией нельзя: PnL по ней не существует. */}
