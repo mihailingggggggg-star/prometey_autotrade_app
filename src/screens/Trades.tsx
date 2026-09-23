@@ -164,10 +164,16 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
                 {t.side === "long" ? "LONG" : "SHORT"}
               </span>
               <AlgoTag source={t.source} />
-          <ScenarioTag scenario={t.scenario} />
               <ScenarioTag scenario={t.scenario} />
             </div>
-            <div className="text-[12px] mt-0.5" style={{ color: r.c }}>{r.t} · {dt(t.closedAt)}</div>
+            {/* СКОЛЬКО СТУПЕНЕЙ ВЗЯТО — прямо в строке. «Часть целей → БУ» не
+                отличает одну взятую цель от двух, а разница между ними —
+                половина результата сделки. Данные приходили с сервера и не
+                показывались нигде: сделка, забравшая две цели, выглядела так
+                же, как забравшая одну. */}
+            <div className="text-[12px] mt-0.5" style={{ color: r.c }}>
+              {r.t}{t.hits ? ` · ${t.hits} ${plural(t.hits, "ступень", "ступени", "ступеней")}` : ""} · {dt(t.closedAt)}
+            </div>
           </div>
           <div className="text-right shrink-0">
             <div className="text-[16px] font-bold" style={{ color: tone(t.pnl) }}>{money(t.pnl, true)}</div>
@@ -190,7 +196,8 @@ function TradeRow({ t, open, onToggle }: { t: Trade; open: boolean; onToggle: ()
               <D k="В рынке" v={hold(t.heldMin)} />
               <D k="Был в плюсе" v={rr(t.mfe)} c={tone(1)} />
               <D k="Был в минусе" v={rr(t.mae)} c={tone(-1)} />
-              <D k="Сценарий" v={t.scenario || "—"} wide />
+              <D k="Взято ступеней" v={t.hits == null ? "неизвестно" : String(t.hits)} />
+              <D k="Сценарий" v={t.scenario || "—"} />
             </div>
             {/* График сделки — по тапу, а не сразу: рисовать его всем строкам
                 списка значило бы тянуть свечи по каждой сделке за месяц. */}

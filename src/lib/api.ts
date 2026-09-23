@@ -117,7 +117,26 @@ export type Contour = "normal" | "algo";
 export type ApiPosition = {
   id: string; symbol: string; side: "long" | "short"; lev: number;
   entry: number; mark: number; sl: number; slPlan: number;
-  tp: number; tps: { price: number; weight: number }[];
+  /** Ступени фиксации С ОТМЕТКОЙ «взята» и с ожиданием в деньгах по каждой.
+   *  Считает всё СЕРВЕР: цена ступени сама по себе не отвечает на вопрос, с
+   *  которым на неё смотрят, а пересчёт в деньги требует замороженной цены R —
+   *  той самой, которую экран раньше брал из текущего стопа и получал ноль.
+   *  `done: null` — биржа не ответила, то есть НЕИЗВЕСТНО, а не «не взята». */
+  tp: number; tps: { price: number; weight: number; r: number; usd: number;
+                     done: boolean | null }[];
+  /** Сколько ступеней уже взято (null — неизвестно). У открытой позиции это
+   *  единственный способ узнать, что первая цель отработала: `tp_hits` в
+   *  журнале появляется только при закрытии. */
+  hits: number | null;
+  /** ЦЕНА ОДНОГО R, замороженная в момент филла. Перенос стопа в безубыток
+   *  затирает `sl`, и считать R из него — значит делить на ноль. */
+  rDist: number;
+  openSize: number; sizeLeft: number; doneShare: number;
+  /** Реализованное ступенями и ход остатка — РАЗДЕЛЬНО. Их сумма (`r`/`usd`)
+   *  помечена как состояние «сейчас»: сложив зафиксированную прибыль с
+   *  нереализованным ходом молча, мы выдали бы состояние за итог. */
+  rDone: number; usdDone: number; rOpen: number; usdOpen: number;
+  r: number; usd: number;
   be: number | null; beMoved: boolean;
   size: number; risk: number; openedAt: number; scheme: string;
   /** Размер В ДОЛЛАРАХ по текущей цене и замороженная маржа. `marginFrom`

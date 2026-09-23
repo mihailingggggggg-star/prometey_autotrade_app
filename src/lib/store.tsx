@@ -111,6 +111,13 @@ function toPosition(p: ApiPosition, mark: number): M.Position {
     size: p.size, risk: p.risk, openedAt: p.openedAt, scheme: p.scheme,
     status: p.status, entryType: p.entryType, upl: p.upl, source: p.source,
     scenario: p.scenario,
+    /* Деньги и ступени — КАК ПОСЧИТАЛ СЕРВЕР. Пересчитывать их здесь значит
+       завести второй экземпляр торговой арифметики, ровно как запрещено
+       считать лесенку боту: разойдясь однажды, экран начнёт описывать не ту
+       сделку, которая идёт на бирже. */
+    hits: p.hits, rDist: p.rDist, doneShare: p.doneShare,
+    rDone: p.rDone, usdDone: p.usdDone, rOpen: p.rOpen, usdOpen: p.usdOpen,
+    rNow: p.r, usdNow: p.usd,
     /* Номинал пересчитываем по ЖИВОЙ цене из потока Bybit: серверный считался
        на момент опроса, а цена с тех пор ушла. Маржа — как пришла: она
        заморожена на бирже и от тика не меняется. */
@@ -125,7 +132,7 @@ function toTrade(t: ApiTrade): M.Trade {
     pnl: t.pnl, r: t.r, reason: t.reason, reasonRu: t.reasonRu,
     closedAt: t.closedAt || 0,
     heldMin: t.heldMin, fee: t.fee, mfe: t.mfe, mae: t.mae, scenario: t.scenario,
-    source: t.source,
+    hits: t.hits, source: t.source,
   };
 }
 
@@ -383,12 +390,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
  *  брали цену сигнала за цену входа и показывали движение рынка как свой
  *  результат — сделки, которой не было. Отсюда же и «−$4.20» на ряду, по
  *  которому не куплено ни одной монеты. */
+/** Результат открытой позиции: реализованное ступенями + ход остатка.
+ *
+ *  СЧИТАЕТ СЕРВЕР, здесь только живая поправка на текущую цену. До 23.09.2026
+ *  всё считалось тут, и все три формулы были неверны:
+ *
+ *   1. `R = (mark − entry) / |entry − sl|`. Перенос стопа в безубыток делает
+ *      `sl` равным входу — знаменатель обращается в НОЛЬ, и позиция, взявшая
+ *      первую цель, показывала ровно «0.00R». Хуже всего экран врал там, где
+ *      сделка удалась.
+ *   2. `usd = (mark − entry) · size` — по ЗАКАЗАННОМУ размеру, хотя после
+ *      первой ступени половина позиции уже закрыта: ход остатка выходил вдвое
+ *      больше настоящего.
+ *   3. Взятые ступени не участвовали вовсе — реализованные деньги просто
+ *      исчезали с экрана.
+ *
+ *  Цена R (`rDist`) заморожена сервером в момент филла, доля незакрытого
+ *  остатка — оттуда же. Поток котировок Bybit быстрее нашего опроса, поэтому
+ *  ход ОСТАТКА пересчитывается по живой цене, а реализованное берётся как
+ *  есть: оно уже случилось и от тика не меняется. */
 export function posPnl(p: M.Position) {
   if (p.status === "pending") return { usd: 0, r: 0, pct: 0, pending: true as const };
-  const d = p.side === "long" ? p.mark - p.entry : p.entry - p.mark;
-  const rDist = Math.abs(p.entry - p.sl);
-  return { usd: d * p.size, r: rDist ? d / rDist : 0, pct: (d / p.entry) * 100 * p.lev,
-           pending: false as const };
+  const dir = p.side === "long" ? 1 : -1;
+  const d = (p.mark - p.entry) * dir;
+  /* Старый бот новых полей не шлёт — тогда прежний расчёт, но дистанцию риска
+     всё равно берём плановую, если стоп уже уехал в безубыток. */
+  const rDist = p.rDist || Math.abs(p.entry - p.sl);
+  const left = 1 - (p.doneShare ?? 0);
+  const rOpen = rDist ? (d / rDist) * left : 0;
+  const rDone = p.rDone ?? 0;
+  const usdOpen = d * p.size * left;
+  const usdDone = p.usdDone ?? 0;
+  return {
+    usd: usdDone + usdOpen, r: rDone + rOpen,
+    usdDone, usdOpen, rDone, rOpen,
+    pct: (d / p.entry) * 100 * p.lev * left,
+    pending: false as const,
+  };
 }
 
 /** В рынке ли позиция. Отдельной функцией, потому что вопрос «сколько у меня

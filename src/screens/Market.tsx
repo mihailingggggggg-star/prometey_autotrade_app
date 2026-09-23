@@ -138,10 +138,15 @@ function PositionCard({ p, onOpen }: { p: Position; onOpen: () => void }) {
                       style={{ background: usd >= 0 ? "var(--green)" : "var(--red)" }} />
         </div>
 
-        <div className="flex items-center justify-between mt-2.5 text-[12px]" style={{ color: "var(--label-2)" }}>
-          <span>{pending ? "лимитка" : "вход"} {price(p.entry)}</span>
-          <span>сейчас <b style={{ color: "var(--label)" }}>{price(p.mark)}</b></span>
-          <span>цель {price(p.tp)}</span>
+        {/* СТУПЕНИ, А НЕ «сейчас · цель» (решение владельца 23.09.2026). Текущая
+            цена уже нарисована полосой выше и стоит в подробном экране, а
+            «цель» одним числом описывала только ПЕРВУЮ ступень лесенки — то
+            есть половину плана. Главный вопрос к открытой позиции другой:
+            что уже забрано, а что ещё впереди. */}
+        <div className="flex items-center justify-between gap-2 mt-2.5 text-[12px]"
+             style={{ color: "var(--label-2)" }}>
+          <span className="shrink-0">{pending ? "лимитка" : "вход"} {price(p.entry)}</span>
+          <TpChips p={p} pending={pending} />
         </div>
       </Glass>
     </Press>
@@ -158,7 +163,7 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
   const [tf, setTf] = useState<Interval>("15");
   const [fullChart, setFullChart] = useState(false);
   const tk = useTickers([p.symbol])[p.symbol];
-  const { usd, r, pending } = posPnl(p);
+  const { usd, r, rDone, usdDone, usdOpen, pending } = posPnl(p);
   const [lens, setLensRaw] = useState(readLens());
   const [panes, setPanesRaw] = useState(readPanes());
   const setLens = (l: typeof lens) => { setLensRaw(l); saveLens(l); };
@@ -233,6 +238,15 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
                 <>
                   <div className="num-hero mt-1" style={{ color: tone(usd) }}>{money(usd, true)}</div>
                   <div className="text-[15px] mt-0.5" style={{ color: tone(usd) }}>{rr(r)}</div>
+                  {/* РЕАЛИЗОВАННОЕ И ХОД ОСТАТКА — РАЗДЕЛЬНО, как только ступень
+                      взята. Сумма сверху помечена «сейчас»: зафиксированная
+                      прибыль и нереализованный ход — разные деньги, и сложив их
+                      молча, экран выдал бы состояние за итог. */}
+                  {!!rDone && (
+                    <div className="text-[12px] mt-0.5" style={{ color: "var(--label-2)" }}>
+                      сейчас: {money(usdDone, true)} забрано · {money(usdOpen, true)} в рынке
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -317,6 +331,23 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
             <KV k="Безубыток" v={p.be ? `при ${price(p.be)}` : "не переносим"} last />
           </Glass>
         </div>
+
+        {!!p.tps?.length && (
+          <div className="px-4 mt-3">
+            <div className="px-1 pb-1.5 text-[13px]" style={{ color: "var(--label-2)" }}>
+              Ступени фиксации
+            </div>
+            <Glass flat className="overflow-hidden">
+              <LegRows p={p} />
+            </Glass>
+            {/* Числа названы тем, что они есть: планом. Ступень стоит в стакане
+                лимиткой — до неё ещё надо дойти, и обещать деньги нельзя. */}
+            <div className="px-1 pt-1.5 text-[11px] leading-snug" style={{ color: "var(--label-3)" }}>
+              Суммы — сколько ступень принесёт, если цена до неё дойдёт. Считаны от
+              риска сделки и реально открытого размера.
+            </div>
+          </div>
+        )}
 
         <div className="px-4 mt-3 grid grid-cols-2 gap-2.5">
           <Press onClick={() => { setTp(p.tp); setSl(p.sl); setEdit(true); }}
@@ -464,6 +495,62 @@ function useLevels(p: Position, pending: boolean,
     return out;
   }, [p.entry, p.tp, p.sl, p.be, JSON.stringify(p.tps), pending, key]);
 }
+
+/** Ступени фиксации значками: взята — залита, не взята — контур.
+ *
+ *  «Взята ли» считает СЕРВЕР по размеру позиции: она уменьшилась от своего
+ *  пика — значит ступень сработала. `done === null` означает, что биржа не
+ *  ответила, и это НЕ то же самое, что «не взята»: пустой ответ не имеет
+ *  права становиться утверждением о сделке, поэтому такой значок показан
+ *  нейтрально, а не как невзятая цель. */
+function TpChips({ p, pending }: { p: Position; pending: boolean }) {
+  const legs = p.tps?.length ? p.tps : (p.tp ? [{ price: p.tp, weight: 1 }] : []);
+  if (!legs.length) return <span>цель не задана</span>;
+  return (
+    <span className="flex items-center gap-1 shrink-0">
+      {legs.map((l, i) => {
+        const done = !pending && l.done === true;
+        const unknown = !pending && l.done == null;
+        return (
+          <span key={i}
+                className="px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums"
+                style={done
+                  ? { background: "var(--green)", color: "#fff" }
+                  : { background: `color-mix(in srgb, var(--label-3) ${unknown ? 40 : 70}%, transparent)`,
+                      color: "var(--label-2)" }}>
+            {done ? "✓ " : ""}TP{i + 1}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** Ожидание от каждой ступени В ДЕНЬГАХ.
+ *
+ *  Цена ступени не отвечает на вопрос, с которым на неё смотрят, а доля веса
+ *  требует пересчёта в уме — и этот пересчёт экран раньше делал по неверной
+ *  дистанции риска. Числа приходят с сервера готовыми: считать их здесь
+ *  вторым экземпляром значит однажды разойтись с тем, что стоит в стакане. */
+function LegRows({ p }: { p: Position }) {
+  const legs = p.tps ?? [];
+  if (!legs.length) return null;
+  return (
+    <>
+      {legs.map((l, i) => (
+        <KV key={i}
+            k={`TP${i + 1} · ${Math.round((l.weight || 0) * 100)}% · ${price(l.price)}`}
+            v={l.done === true
+              ? `взята · ${money(l.usd ?? 0, true)}`
+              : l.usd != null
+                ? `${money(l.usd, true)} · ${rr(l.r ?? 0)}`
+                : "—"}
+            last={i === legs.length - 1} />
+      ))}
+    </>
+  );
+}
+
 
 function Legend({ color, text }: { color: string; text: string }) {
   return (
