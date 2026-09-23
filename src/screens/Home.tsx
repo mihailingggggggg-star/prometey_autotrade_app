@@ -36,7 +36,10 @@ export function Home({ onTab }: { onTab: (t: Tab) => void }) {
   const webNoKey = !inTelegram && !hasSession();
   const sigSymbols = useMemo(() => [...new Set(signals.map((s) => s.symbol))], [signals]);
   const sigTicks = useTickers(sigSymbols);
-  const [period, setPeriod] = useState<Period>("w");
+  /* ПО УМОЛЧАНИЮ — СЕГОДНЯ (решение владельца 23.09.2026). Экран открывают,
+     чтобы узнать, что происходит сейчас; неделя отвечает на другой вопрос и
+     размазывает сегодняшний день по шести прошлым. Переключатель на месте. */
+  const [period, setPeriod] = useState<Period>("d");
   const [detail, setDetail] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [showAddHome, setShowAddHome] = useState(!homeCardHidden());

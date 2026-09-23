@@ -160,7 +160,10 @@ function Detail({ p, onClose }: { p: Position; onClose: () => void }) {
   const [edit, setEdit] = useState(false);
   const [tp, setTp] = useState(p.tp);
   const [sl, setSl] = useState(p.sl);
-  const [tf, setTf] = useState<Interval>("15");
+  /* ПЯТЬ МИНУТ ПО УМОЛЧАНИЮ (решение владельца 23.09.2026). Сделка контура
+     живёт десятки минут, и на пятнадцатиминутках вся её жизнь — три-четыре
+     свечи: видно, куда цена пришла, и не видно, как. */
+  const [tf, setTf] = useState<Interval>("5");
   const [fullChart, setFullChart] = useState(false);
   const tk = useTickers([p.symbol])[p.symbol];
   const { usd, r, rDone, usdDone, usdOpen, pending } = posPnl(p);
