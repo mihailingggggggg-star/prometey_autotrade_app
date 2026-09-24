@@ -13,11 +13,11 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, BarChart3, Clock, Coins, Flame, Layers, Percent, PieChart,
-         Scale, Share2, Target, Timer, TrendingUp } from "lucide-react";
+         Scale, Share2, Split, Target, Timer, TrendingUp } from "lucide-react";
 import { Glass, Press, Sheet, tone } from "../ui/kit";
 import { CardPreview } from "../ui/CardPreview";
 import { drawEquityCard, equityCardBlob, type ShareEquity, type ShareKind } from "../ui/ShareCard";
-import { getHealth } from "../lib/api";
+import { getHealth, getScenarios, type ApiScenario, type Contour } from "../lib/api";
 import { BarPlot, LinePlot } from "../ui/Plot";
 import { byDay, byHour, byReason, bySide, bySymbol, dayLabel, equity, rHist, summary } from "../lib/stats";
 import type { Trade } from "../lib/mock";
@@ -53,12 +53,32 @@ type Card = {
  * столбиков, пустые дни видны провалами. 0 — период «Всё»: там сетку по-
  * прежнему задаёт первая сделка, иначе получилось бы десять лет пустоты.
  */
-export function Dash({ trades, gridDays = 0, periodLabel = "Всё время" }:
-                     { trades: Trade[]; gridDays?: number; periodLabel?: string }) {
+export function Dash({ trades, gridDays = 0, periodLabel = "Всё время",
+                      contour = "normal", fromMs = 0 }:
+                     { trades: Trade[]; gridDays?: number; periodLabel?: string;
+                       contour?: Contour; fromMs?: number }) {
   const [open, setOpen] = useState<string | null>(null);
   const [share, setShare] = useState(false);
   const [bot, setBot] = useState("");
   useEffect(() => { void getHealth().then((h) => setBot(h.bot || "")).catch(() => {}); }, []);
+  /* Разрез по сценариям считает СЕРВЕР, а не мы из `trades`. Не потому, что
+     тяжело, а потому, что нам пришлось бы держать свой список s1..s7, свои
+     русские имена, состояние тумблеров и базу для процентов — всё это живёт у
+     бота и меняется без нашей сборки.
+
+     `null` вместо цифр — это ответ «не посчитано», и он рисуется прочерком.
+     Нарисуй мы вместо него ноль, «сценарий не торговал» стало бы неотличимо
+     от «сценарий отработал в ноль». */
+  const [scen, setScen] = useState<ApiScenario[] | null>(null);
+  const [scenBase, setScenBase] = useState(0);
+  useEffect(() => {
+    const a = new AbortController();
+    setScen(null);
+    void getScenarios(fromMs, contour, a.signal)
+      .then((d) => { setScen(d.scenarios); setScenBase(d.base); })
+      .catch(() => { if (!a.signal.aborted) setScen([]); });
+    return () => a.abort();
+  }, [fromMs, contour]);
   const s = useMemo(() => summary(trades), [trades]);
   const days = useMemo(() => byDay(trades, gridDays), [trades, gridDays]);
   const eq = useMemo(() => equity(trades), [trades]);
@@ -207,6 +227,46 @@ export function Dash({ trades, gridDays = 0, periodLabel = "Всё время" }
         ),
       },
       {
+        id: "scen", wide: true, title: "По сценариям", icon: <Split size={15} />,
+        value: scenPeak(scen),
+        tint: scen ? tone(scen.reduce((a, x) => a + x.usd, 0)) : undefined,
+        sub: scen === null ? "считаем…"
+             : scenTraded(scen) ? `${scenTraded(scen)} ${plural(scenTraded(scen), "сценарий", "сценария", "сценариев")} в работе`
+             : "сделок за период нет",
+        note: "Пять слоёв контура ищут разные ситуации, и складывать их результат в одно "
+            + "число бессмысленно: «нож» и «шорт в памп» — это разные гипотезы о рынке. "
+            + "Здесь у каждого свои деньги, свой процент к счёту и свой винрейт. "
+            + "Винрейт смотрите только вместе со средними: 35% при выигрыше +1.5R прибыльны, "
+            + "а при +0.42R против −1.01R для нуля нужно 70%. Пустые строки не прячем — "
+            + "«сделок не было» и «не окупается» это разные состояния.",
+        plot: (h) => (
+          <BarPlot height={h} fmt={(v) => money(v, true)}
+                   data={(scen || []).filter((x) => x.n > 0).map((x) => ({
+                     label: x.ru.split(" ")[0], y: +x.usd.toFixed(2),
+                   }))} />
+        ),
+        extra: scen === null ? undefined : (
+          <Rows rows={scen.map((x) => ({
+            k: x.ru + (x.on === false ? " · выключен" : ""),
+            v: x.n ? money(x.usd, true) : "—",
+            c: x.n ? tone(x.usd) : "var(--label-3)",
+            note: x.n
+              ? [`${x.n} ${plural(x.n, "сделка", "сделки", "сделок")}`,
+                 x.winrate === null ? null : `винрейт ${x.winrate}%`,
+                 x.pct === null ? null : `${x.pct >= 0 ? "+" : ""}${x.pct}% к счёту`,
+                 x.avgWinR === null || x.avgLossR === null ? null
+                   : `средние ${rr(x.avgWinR)} / ${rr(x.avgLossR)}`,
+                 x.needWinrate === null ? null : `нужен ${x.needWinrate}%`,
+                 x.openN ? `${x.openN} в рынке` : null,
+                ].filter(Boolean).join(" · ")
+              : x.openN ? `сделок нет · ${x.openN} в рынке` : "сделок нет",
+          })).concat(scenBase > 0 ? [{
+            k: "База процентов", v: money(scenBase),
+            c: "var(--label-3)", note: "капитал на начало периода",
+          }] : [])} />
+        ),
+      },
+      {
         id: "why", title: "Чем заканчивались", icon: <PieChart size={15} />,
         value: String(byReason(trades)[0] ? (REASON_RU[byReason(trades)[0].reason] || byReason(trades)[0].reason) : "—"),
         sub: "чаще всего",
@@ -254,7 +314,7 @@ export function Dash({ trades, gridDays = 0, periodLabel = "Всё время" }
       });
     }
     return list;
-  }, [trades, s, days, eq]);
+  }, [trades, s, days, eq, scen, scenBase]);
 
   if (!trades.length) return null;
   const cur = cards.find((c) => c.id === open) || null;
@@ -356,6 +416,23 @@ function EquityCard({ trades, s, eq, bot, periodLabel, onClose }: {
       }}
       onClose={onClose} />
   );
+}
+
+/** Сколько сценариев реально торговало за период. Ноль и «нет данных» —
+ *  разные состояния, и заголовок карточки обязан их различать. */
+function scenTraded(scen: ApiScenario[] | null): number {
+  return (scen || []).filter((x) => x.n > 0).length;
+}
+
+/** Герой карточки — ЛУЧШИЙ сценарий по деньгам, а не общий итог: итог уже
+ *  стоит в «Кумулятивной прибыли», и повторять его тут значит занять место
+ *  числом, которое ничего не добавляет. Нечему побеждать — говорим прямо. */
+function scenPeak(scen: ApiScenario[] | null): string {
+  if (scen === null) return "—";
+  const traded = scen.filter((x) => x.n > 0);
+  if (!traded.length) return "—";
+  const best = traded.reduce((a, b) => (b.usd > a.usd ? b : a));
+  return best.usd > 0 ? best.ru : "нет прибыльных";
 }
 
 function Rows({ rows }: { rows: { k: string; v: string; c?: string; note?: string }[] }) {

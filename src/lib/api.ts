@@ -249,6 +249,40 @@ export const getSignals = (contour: Contour = "normal", s?: AbortSignal) =>
   get<{ signals: ApiSignal[]; mode: string; source: Contour }>(
     `/api/signals?source=${contour}`, s);
 
+/* ── Дашборд по сценариям ──────────────────────────────────────────────────
+   СПИСОК СЦЕНАРИЕВ И ИХ ИМЕНА ПРИХОДЯТ С СЕРВЕРА, а не лежат здесь. Свой
+   перечень s1..s7 во фронте отставал бы ровно на один релиз: s6 и s7 завелись
+   24.09.2026, и экран молча не показывал бы их до следующей сборки. Тот же
+   урок уже оплачен именем причины закрытия — его тоже считает сервер.
+
+   `pct` — доходность в процентах от капитала НА НАЧАЛО ОКНА (`base`), а не от
+   сегодняшнего: иначе один и тот же набор сделок показывал бы разный процент
+   при каждом заходе. Базы нет — приходит `null`, и рисовать вместо него ноль
+   нельзя: ноль означал бы «заработали ноль процентов».
+
+   `winrate` НИКОГДА не показываем один. Рядом обязаны стоять средние и
+   винрейт безубыточности: 35% при выигрыше +1.5R прибыльны, а при +0.42R
+   против −1.01R для нуля нужно 70%. ── */
+export type ApiScenario = {
+  key: string; ru: string; on: boolean | null;
+  n: number; wins: number; winrate: number | null;
+  usd: number; pct: number | null; r: number;
+  avgUsd: number | null; avgWinR: number | null; avgLossR: number | null;
+  needWinrate: number | null; openN: number;
+};
+export type ApiScenarios = {
+  scenarios: ApiScenario[];
+  total: { n: number; wins: number; usd: number; r: number; openN: number;
+           winrate: number | null; pct: number | null };
+  mode: string; source: Contour; days: number; base: number; baseFrom: string;
+};
+/** `fromMs` — ТА ЖЕ отметка, по которой экран отобрал свои сделки. Период тут
+ *  режется по локальной полуночи пояса отчётности, а не «минус N×24ч»; передай
+ *  мы серверу число дней, он посчитал бы другое окно, и карточка описывала бы
+ *  не тот период, что список под ней. 0 — «всё время». */
+export const getScenarios = (fromMs = 0, contour: Contour = "normal", s?: AbortSignal) =>
+  get<ApiScenarios>(`/api/scenarios?from=${Math.round(fromMs)}&source=${contour}`, s);
+
 export type ApiPayment = {
   id: string; at: number; kind: string; amount: number; note: string; status: string;
 };

@@ -111,7 +111,10 @@ export function Trades() {
       <div className="mt-3">
         {/* «Всё» сеткой не ограничиваем: 3650 пустых столбиков вместо графика. */}
         <Dash trades={rows} gridDays={p === "all" ? 0 : OPTS.find((o) => o.id === p)!.days}
-              periodLabel={OPTS.find((o) => o.id === p)!.label} />
+              periodLabel={OPTS.find((o) => o.id === p)!.label} contour={contour}
+              /* ТА ЖЕ граница, по которой отобран `rows`: иначе карточка
+                 сценариев описывала бы не тот период, что список под ней. */
+              fromMs={p === "all" ? 0 : windowStart(OPTS.find((o) => o.id === p)!.days)} />
       </div>
 
       {/* ── История ────────────────────────────────────────────────────────── */}
