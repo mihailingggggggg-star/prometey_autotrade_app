@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Inbox, Layers, Maximize2, OctagonX, SlidersHorizontal,
          TrendingDown, TrendingUp, X } from "lucide-react";
-import { Glass, Modal, Press, Segmented, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag, ScenarioTag } from "../ui/kit";
+import { Glass, Modal, Press, Sheet, Title, cssVar, portal, tone, SPRING, AlgoTag, ScenarioTag } from "../ui/kit";
 import { useApp, posPnl } from "../lib/store";
 import type { Position } from "../lib/mock";
 import { money, price, pct, rr, ago, plural } from "../lib/format";
@@ -15,34 +15,24 @@ import { AddPaneStrip, LensButton, PaneSheet, readLens, readPanes, saveLens, sav
 import { useSwipe } from "../lib/swipe";
 
 export function Market() {
-  const { positions, feed, contour, setContour } = useApp();
+  const { positions, feed } = useApp();
   const [open, setOpen] = useState<Position | null>(null);
   const live = positions.find((p) => p.id === open?.id) || null;
 
-  /* Переключатель контуров и здесь, а не только в истории: сделка алгоса живёт
-     минуты и закрывается по угасанию подписи — рядом с часовой позицией
-     контура охоты она читается как такая же, хотя ведётся по другим правилам.
-
-     НО СКРЫТОЕ НАЗЫВАЕТСЯ ВСЛУХ. Позиции — это живое состояние счёта, а не
-     аналитика: умолчав про отфильтрованные, экран сказал бы владельцу, что бот
-     держит меньше, чем держит, — а это самая дорогая разновидность вранья,
-     какая тут возможна. Поэтому под списком стоит строка с числом скрытых. */
-  const shown = positions.filter((p) => contour === "algo"
-    ? p.source === "algo" : p.source !== "algo");
-  const hidden = positions.length - shown.length;
+  /* ПОЗИЦИИ ПОКАЗЫВАЮТСЯ ВСЕ И ВСЕГДА. Переключатель контуров тут стоял, пока
+     контуров было двое; он фильтровал живое состояние счёта, и правило рядом с
+     ним было названо прямо: скрытое обязано называться вслух, иначе экран
+     говорит владельцу, что бот держит меньше, чем держит. Контур остался один,
+     фильтровать нечего — и лучший способ не соврать о числе позиций это не
+     фильтровать их вовсе. Тег контура в строке остаётся: ряд удалённого режима
+     может ещё висеть открытым, и выглядеть он должен не как сигнал охоты. */
+  const shown = positions;
 
   return (
     <div className="pb-2">
       <Title sub={feed === "live" ? "Цены Bybit · в реальном времени"
                 : feed === "connecting" ? "подключаемся к бирже…"
                 : "нет связи с биржей — цены могли устареть"}>Позиции</Title>
-
-      <div className="px-4 mb-2.5">
-        <Segmented value={contour} onChange={setContour} options={[
-          { id: "normal" as const, label: "Обычный режим" },
-          { id: "algo" as const, label: "Алгос" },
-        ]} />
-      </div>
 
       {!shown.length && (
         <div className="px-4">
@@ -63,12 +53,6 @@ export function Market() {
       <div className="px-4 space-y-2.5" data-coach="positions">
         {shown.map((p) => <PositionCard key={p.id} p={p} onOpen={() => setOpen(p)} />)}
       </div>
-
-      {hidden > 0 && !!shown.length && (
-        <div className="px-4 pt-2.5 text-[13px] text-center" style={{ color: "var(--label-2)" }}>
-          Ещё {hidden} {plural(hidden, "позиция", "позиции", "позиций")} в другом контуре
-        </div>
-      )}
 
       <AnimatePresence>
         {live && <Detail p={live} onClose={() => setOpen(null)} />}

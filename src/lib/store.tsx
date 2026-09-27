@@ -96,8 +96,6 @@ type Ctx = {
      ОТКРЫТЫХ ПОЗИЦИЙ ЭТО НЕ КАСАЕТСЯ: они показываются все и всегда, с тегом
      контура. Это живое состояние счёта, а не аналитика, и знать, что бот
      держит, владелец должен целиком. */
-  contour: "normal" | "algo";
-  setContour: (c: "normal" | "algo") => void;
 };
 
 /* Ряды бота → модели экранов. Отдельными функциями, а не «типы совпадают,
@@ -377,8 +375,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return act("entry:" + id, () => API.moveEntry(id, entry));
     },
     trades, signals, payments, riskAlert,
-    contour: server.contour,
-    setContour: server.setContour,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

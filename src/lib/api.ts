@@ -104,15 +104,13 @@ export function dropSession() {
  *  Смешивать их результаты в одну статистику значит не измерить ни один. */
 export type Source = "screener" | "algo" | "hunter";
 
-/** Что показывать: «обычный режим» (скринер + контур охоты) или «алгос».
- *
- *  Разделение НЕ по числу контуров, а по СРАВНИМОСТИ. Сделка контура охоты
- *  живёт часами и закрывается ценой — её можно класть в один винрейт со
- *  сделкой скринера. Алгос закрывает сделку за минуты и не по цене, а потому
- *  что подпись погасла, и делает их кратно больше: в общей куче он переписывает
- *  собой винрейт, среднюю длительность и число сделок, и цифры перестают
- *  описывать хоть что-нибудь одно. */
-export type Contour = "normal" | "algo";
+/* ПЕРЕКЛЮЧАТЕЛЯ КОНТУРОВ БОЛЬШЕ НЕТ (27.09.2026). Режим «алгос» удалён
+   целиком, и параметр `?source=` с единственным значением был бы ложным
+   обещанием выбора. Правило, ради которого он заводился, осталось на сервере:
+   ряды алгоса в аналитику не идут (`store.NOT_ALGO`) — сделка там закрывалась
+   за минуты и не по цене, и в общей куче переписывала бы собой винрейт,
+   среднюю длительность и число сделок. Смотреть на них больше негде; в журнале
+   бота они хранятся как след реальных ордеров. */
 
 export type ApiPosition = {
   id: string; symbol: string; side: "long" | "short"; lev: number;
@@ -236,18 +234,17 @@ export const getMe = (s?: AbortSignal) => get<ApiMe>("/api/me", s);
 export const getState = (s?: AbortSignal) => get<ApiState>("/api/state", s);
 export const getPositions = (s?: AbortSignal) =>
   get<{ positions: ApiPosition[]; mode: string; ts: number }>("/api/positions", s);
-export const getTrades = (days = 0, contour: Contour = "normal", s?: AbortSignal) =>
-  get<{ trades: ApiTrade[]; mode: string; source: Contour }>(
-    `/api/trades?days=${days}&limit=500&source=${contour}`, s);
+export const getTrades = (days = 0, s?: AbortSignal) =>
+  get<{ trades: ApiTrade[]; mode: string }>(
+    `/api/trades?days=${days}&limit=500`, s);
 
 export type ApiSignal = {
   id: string; symbol: string; side: "long" | "short"; score: number; whale: boolean;
   at: number; status: string; entryType: "market" | "limit"; source?: Source;
   pnl: number | null; r: number | null;
 };
-export const getSignals = (contour: Contour = "normal", s?: AbortSignal) =>
-  get<{ signals: ApiSignal[]; mode: string; source: Contour }>(
-    `/api/signals?source=${contour}`, s);
+export const getSignals = (s?: AbortSignal) =>
+  get<{ signals: ApiSignal[]; mode: string }>("/api/signals", s);
 
 /* ── Дашборд по сценариям ──────────────────────────────────────────────────
    СПИСОК СЦЕНАРИЕВ И ИХ ИМЕНА ПРИХОДЯТ С СЕРВЕРА, а не лежат здесь. Свой
@@ -263,25 +260,53 @@ export const getSignals = (contour: Contour = "normal", s?: AbortSignal) =>
    `winrate` НИКОГДА не показываем один. Рядом обязаны стоять средние и
    винрейт безубыточности: 35% при выигрыше +1.5R прибыльны, а при +0.42R
    против −1.01R для нуля нужно 70%. ── */
+/** Монета ВНУТРИ сценария. Сценарий отвечает «какая гипотеза о рынке», монета
+ *  — «на чём она проверялась»; без второго первое читается как средняя
+ *  температура: у контура бывает пять входов по одной монете за полчаса, и в
+ *  сводке они выглядят как пять независимых ставок. */
+export type ApiScenCoin = {
+  symbol: string; n: number; wins: number; be: number;
+  winrate: number | null; usd: number; r: number;
+};
 export type ApiScenario = {
   key: string; ru: string; on: boolean | null;
-  n: number; wins: number; winrate: number | null;
+  n: number; wins: number; losses: number; be: number; decided: number;
+  winrate: number | null;
   usd: number; pct: number | null; r: number;
   avgUsd: number | null; avgWinR: number | null; avgLossR: number | null;
   needWinrate: number | null; openN: number;
+  coins: ApiScenCoin[];
 };
 export type ApiScenarios = {
   scenarios: ApiScenario[];
-  total: { n: number; wins: number; usd: number; r: number; openN: number;
+  total: { n: number; wins: number; losses: number; be: number; decided: number;
+           usd: number; r: number; openN: number;
            winrate: number | null; pct: number | null };
-  mode: string; source: Contour; days: number; base: number; baseFrom: string;
+  mode: string; days: number; base: number; baseFrom: string;
 };
 /** `fromMs` — ТА ЖЕ отметка, по которой экран отобрал свои сделки. Период тут
  *  режется по локальной полуночи пояса отчётности, а не «минус N×24ч»; передай
  *  мы серверу число дней, он посчитал бы другое окно, и карточка описывала бы
  *  не тот период, что список под ней. 0 — «всё время». */
-export const getScenarios = (fromMs = 0, contour: Contour = "normal", s?: AbortSignal) =>
-  get<ApiScenarios>(`/api/scenarios?from=${Math.round(fromMs)}&source=${contour}`, s);
+export const getScenarios = (fromMs = 0, toMs = 0, s?: AbortSignal) =>
+  get<ApiScenarios>(
+    `/api/scenarios?from=${Math.round(fromMs)}&to=${Math.round(toMs)}`, s);
+
+/* ── Сутки, по которым есть данные ─────────────────────────────────────────
+   Под календарь: без отметки владелец ГАДАЕТ — тыкает даты, пока не попадёт в
+   ту, где что-то было, и пустой экран не отличается от неверно выбранного дня.
+
+   ДАТУ СЧИТАЕТ СЕРВЕР, в поясе отчётности (Бишкек). Считай её мы, сделка,
+   закрытая в 02:00 по Бишкеку, у владельца в поездке уехала бы во вчера, и
+   «21 сентября» в приложении значило бы не то же, что в отчёте и в панели.
+   `tzOffsetMin` едет рядом — по нему границы промежутка считаются ТЕМИ ЖЕ
+   сутками, которые сервер разметил.
+
+   Итог дня приходит вместе с отметкой: календарь тогда красит не «были
+   сделки», а «день прибыльный или убыточный». ── */
+export type ApiDay = { date: string; n: number; usd: number; r: number };
+export type ApiDays = { mode: string; days: ApiDay[]; tzOffsetMin: number; ts: number };
+export const getDays = (s?: AbortSignal) => get<ApiDays>("/api/days", s);
 
 export type ApiPayment = {
   id: string; at: number; kind: string; amount: number; note: string; status: string;

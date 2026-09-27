@@ -14,10 +14,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, BarChart3, Clock, Coins, Flame, Layers, Percent, PieChart,
          Scale, Share2, Split, Target, Timer, TrendingUp } from "lucide-react";
-import { Glass, Press, Sheet, tone } from "../ui/kit";
+import { Glass, Press, Segmented, Sheet, tone } from "../ui/kit";
 import { CardPreview } from "../ui/CardPreview";
 import { drawEquityCard, equityCardBlob, type ShareEquity, type ShareKind } from "../ui/ShareCard";
-import { getHealth, getScenarios, type ApiScenario, type Contour } from "../lib/api";
+import { getHealth, getScenarios, type ApiScenario } from "../lib/api";
 import { BarPlot, LinePlot } from "../ui/Plot";
 import { byDay, byHour, byReason, bySide, bySymbol, dayLabel, equity, rHist, summary } from "../lib/stats";
 import type { Trade } from "../lib/mock";
@@ -54,9 +54,9 @@ type Card = {
  * прежнему задаёт первая сделка, иначе получилось бы десять лет пустоты.
  */
 export function Dash({ trades, gridDays = 0, periodLabel = "Всё время",
-                      contour = "normal", fromMs = 0 }:
+                      fromMs = 0, toMs = 0 }:
                      { trades: Trade[]; gridDays?: number; periodLabel?: string;
-                       contour?: Contour; fromMs?: number }) {
+                       fromMs?: number; toMs?: number }) {
   const [open, setOpen] = useState<string | null>(null);
   const [share, setShare] = useState(false);
   const [bot, setBot] = useState("");
@@ -71,14 +71,26 @@ export function Dash({ trades, gridDays = 0, periodLabel = "Всё время",
      от «сценарий отработал в ноль». */
   const [scen, setScen] = useState<ApiScenario[] | null>(null);
   const [scenBase, setScenBase] = useState(0);
+  /* ДВА ВИДА ОДНОГО РАЗРЕЗА, а не два разных числа в одной строке (просьба
+     владельца 27.09.2026). «Винрейт» и «деньги» отвечают на РАЗНЫЕ вопросы и
+     сортируются по-разному: сценарий с винрейтом 60% может быть худшим по
+     деньгам, если его выигрыши мельче убытков, и увидеть это можно только
+     переключив вид, а не читая одну строку с шестью числами.
+
+     Вид «деньги» стоит ПЕРВЫМ по умолчанию — счёт живёт ими, а винрейт без
+     средних рядом не решает ничего. */
+  const [scenBy, setScenBy] = useState<"usd" | "wr">("usd");
+  /* Какой сценарий раскрыт по монетам. Один за раз: список монет длинный, и
+     раскрыв все, мы получили бы простыню вместо разреза. */
+  const [scenOpen, setScenOpen] = useState<string | null>(null);
   useEffect(() => {
     const a = new AbortController();
     setScen(null);
-    void getScenarios(fromMs, contour, a.signal)
+    void getScenarios(fromMs, toMs, a.signal)
       .then((d) => { setScen(d.scenarios); setScenBase(d.base); })
       .catch(() => { if (!a.signal.aborted) setScen([]); });
     return () => a.abort();
-  }, [fromMs, contour]);
+  }, [fromMs, toMs]);
   const s = useMemo(() => summary(trades), [trades]);
   const days = useMemo(() => byDay(trades, gridDays), [trades, gridDays]);
   const eq = useMemo(() => equity(trades), [trades]);
@@ -228,42 +240,40 @@ export function Dash({ trades, gridDays = 0, periodLabel = "Всё время",
       },
       {
         id: "scen", wide: true, title: "По сценариям", icon: <Split size={15} />,
-        value: scenPeak(scen),
+        value: scenPeak(scen, scenBy),
         tint: scen ? tone(scen.reduce((a, x) => a + x.usd, 0)) : undefined,
         sub: scen === null ? "считаем…"
              : scenTraded(scen) ? `${scenTraded(scen)} ${plural(scenTraded(scen), "сценарий", "сценария", "сценариев")} в работе`
              : "сделок за период нет",
-        note: "Пять слоёв контура ищут разные ситуации, и складывать их результат в одно "
-            + "число бессмысленно: «нож» и «шорт в памп» — это разные гипотезы о рынке. "
-            + "Здесь у каждого свои деньги, свой процент к счёту и свой винрейт. "
-            + "Винрейт смотрите только вместе со средними: 35% при выигрыше +1.5R прибыльны, "
-            + "а при +0.42R против −1.01R для нуля нужно 70%. Пустые строки не прячем — "
-            + "«сделок не было» и «не окупается» это разные состояния.",
+        note: "Слои контура ищут разные ситуации, и складывать их результат в одно "
+            + "число бессмысленно: «шорт в памп» и «доход до цели» — это разные гипотезы "
+            + "о рынке. Два вида, потому что вопросы разные: деньги говорят, что приносит "
+            + "счёт, винрейт — как часто мы правы, и сценарий с винрейтом 60% вполне "
+            + "бывает худшим по деньгам. Винрейт смотрите только вместе со средними: "
+            + "35% при выигрыше +1.5R прибыльны, а при +0.42R против −1.01R для нуля "
+            + "нужно 70%. Безубыток не считается ни победой, ни поражением — он стоит "
+            + "своим числом. Тап по сценарию раскрывает его МОНЕТЫ: пять входов по одной "
+            + "монете за полчаса выглядят в сводке как пять независимых ставок. "
+            + "Пустые строки не прячем — «сделок не было» и «не окупается» это разные "
+            + "состояния.",
         plot: (h) => (
-          <BarPlot height={h} fmt={(v) => money(v, true)}
-                   data={(scen || []).filter((x) => x.n > 0).map((x) => ({
-                     label: x.ru.split(" ")[0], y: +x.usd.toFixed(2),
-                   }))} />
+          <BarPlot height={h}
+                   fmt={(v) => (scenBy === "usd" ? money(v, true) : `${v}%`)}
+                   data={(scen || []).filter((x) => scenBy === "usd" ? x.n > 0 : x.decided > 0)
+                     .map((x) => ({
+                       label: x.ru.split(" ")[0],
+                       y: scenBy === "usd" ? +x.usd.toFixed(2) : (x.winrate ?? 0),
+                     }))} />
         ),
         extra: scen === null ? undefined : (
-          <Rows rows={scen.map((x) => ({
-            k: x.ru + (x.on === false ? " · выключен" : ""),
-            v: x.n ? money(x.usd, true) : "—",
-            c: x.n ? tone(x.usd) : "var(--label-3)",
-            note: x.n
-              ? [`${x.n} ${plural(x.n, "сделка", "сделки", "сделок")}`,
-                 x.winrate === null ? null : `винрейт ${x.winrate}%`,
-                 x.pct === null ? null : `${x.pct >= 0 ? "+" : ""}${x.pct}% к счёту`,
-                 x.avgWinR === null || x.avgLossR === null ? null
-                   : `средние ${rr(x.avgWinR)} / ${rr(x.avgLossR)}`,
-                 x.needWinrate === null ? null : `нужен ${x.needWinrate}%`,
-                 x.openN ? `${x.openN} в рынке` : null,
-                ].filter(Boolean).join(" · ")
-              : x.openN ? `сделок нет · ${x.openN} в рынке` : "сделок нет",
-          })).concat(scenBase > 0 ? [{
-            k: "База процентов", v: money(scenBase),
-            c: "var(--label-3)", note: "капитал на начало периода",
-          }] : [])} />
+          <div className="space-y-2">
+            <Segmented size="sm" value={scenBy} onChange={setScenBy} options={[
+              { id: "usd" as const, label: "Деньги" },
+              { id: "wr" as const, label: "Винрейт" },
+            ]} />
+            <ScenRows rows={scen} by={scenBy} base={scenBase}
+                      open={scenOpen} onOpen={setScenOpen} />
+          </div>
         ),
       },
       {
@@ -424,15 +434,136 @@ function scenTraded(scen: ApiScenario[] | null): number {
   return (scen || []).filter((x) => x.n > 0).length;
 }
 
-/** Герой карточки — ЛУЧШИЙ сценарий по деньгам, а не общий итог: итог уже
- *  стоит в «Кумулятивной прибыли», и повторять его тут значит занять место
- *  числом, которое ничего не добавляет. Нечему побеждать — говорим прямо. */
-function scenPeak(scen: ApiScenario[] | null): string {
+/** Герой карточки — ЛУЧШИЙ сценарий В ВЫБРАННОМ ВИДЕ, а не общий итог: итог
+ *  уже стоит в «Кумулятивной прибыли», и повторять его тут значит занять место
+ *  числом, которое ничего не добавляет.
+ *
+ *  Вид решает, кого считать лучшим, и это не придирка: сценарий с винрейтом
+ *  60% вполне бывает худшим по деньгам. Герой обязан совпадать с тем, по чему
+ *  отсортирован список под ним, иначе карточка называет одного, а показывает
+ *  первым другого.
+ *
+ *  В винрейте лучший ищется только среди тех, у кого ЕСТЬ знаменатель
+ *  (`decided`): сценарий из одних безубытков не имеет винрейта вовсе, и ноль
+ *  вместо него сделал бы его худшим по ошибке. */
+function scenPeak(scen: ApiScenario[] | null, by: "usd" | "wr"): string {
   if (scen === null) return "—";
+  if (by === "wr") {
+    const rated = scen.filter((x) => x.winrate !== null);
+    if (!rated.length) return "—";
+    const best = rated.reduce((a, b) => ((b.winrate ?? 0) > (a.winrate ?? 0) ? b : a));
+    return `${best.ru} · ${best.winrate}%`;
+  }
   const traded = scen.filter((x) => x.n > 0);
   if (!traded.length) return "—";
   const best = traded.reduce((a, b) => (b.usd > a.usd ? b : a));
   return best.usd > 0 ? best.ru : "нет прибыльных";
+}
+
+/* ── Строки разреза по сценариям ────────────────────────────────────────────
+   Отдельный компонент, а не `Rows`, ровно из-за двух вещей, которых у обычных
+   строк нет: ВИДА (деньги или винрейт — разная сортировка и разное главное
+   число) и РАСКРЫТИЯ ПО МОНЕТАМ.
+
+   Монеты внутри сценария просил владелец, и причина та же, по которой в разборе
+   бота есть раздел «повторные входы»: у контура бывает пять входов по одной
+   монете за полчаса, и в сводке они выглядят как пять независимых ставок.
+   Сортируем их ПО ДЕНЬГАМ, худшие первыми — вопрос к разрезу всегда один, где
+   сценарий теряет (сервер отдаёт их уже в этом порядке). ── */
+function ScenRows({ rows, by, base, open, onOpen }: {
+  rows: ApiScenario[]; by: "usd" | "wr"; base: number;
+  open: string | null; onOpen: (k: string | null) => void;
+}) {
+  /* Пустые сценарии уезжают ВНИЗ, но не исчезают: «сделок не было» и «не
+     окупается» — разные состояния, и скрыв нулевую строку, мы сделали бы их
+     неразличимыми. Заодно видно, что выключенный сценарий выключен. */
+  const sorted = [...rows].sort((a, b) => {
+    const live = (x: ApiScenario) => (by === "wr" ? x.decided > 0 : x.n > 0);
+    if (live(a) !== live(b)) return live(a) ? -1 : 1;
+    return by === "wr" ? (b.winrate ?? -1) - (a.winrate ?? -1) : b.usd - a.usd;
+  });
+
+  return (
+    <Glass flat className="overflow-hidden">
+      {sorted.map((x, i) => {
+        const has = by === "wr" ? x.decided > 0 : x.n > 0;
+        const main = !has ? "—"
+          : by === "wr" ? `${x.winrate}%` : money(x.usd, true);
+        const col = !has ? "var(--label-3)"
+          /* Винрейт красим ПО ДЕНЬГАМ, а не по самому проценту: порога
+             «хороший винрейт» не существует — он зависит от размена, и
+             покрасив 45% в красный, мы соврали бы про прибыльный сценарий. */
+          : tone(x.usd);
+        const note = has
+          ? [by === "wr"
+               ? `${x.wins} из ${x.decided}` + (x.be ? ` · ${x.be} в БУ` : "")
+               : `${x.n} ${plural(x.n, "сделка", "сделки", "сделок")}`,
+             by === "wr" ? money(x.usd, true) : (x.winrate === null ? null : `винрейт ${x.winrate}%`),
+             x.pct === null ? null : `${x.pct >= 0 ? "+" : ""}${x.pct}% к счёту`,
+             x.avgWinR === null || x.avgLossR === null ? null
+               : `средние ${rr(x.avgWinR)} / ${rr(x.avgLossR)}`,
+             x.needWinrate === null ? null : `нужен ${x.needWinrate}%`,
+             x.openN ? `${x.openN} в рынке` : null,
+            ].filter(Boolean).join(" · ")
+          : x.openN ? `сделок нет · ${x.openN} в рынке` : "сделок нет";
+        const expanded = open === x.key;
+        return (
+          <div key={x.key || "none"} className={i === sorted.length - 1 && !expanded ? "" : "hairline"}>
+            <Press onClick={() => onOpen(expanded ? null : x.key)}
+                   disabled={!x.coins.length}
+                   className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left">
+              <span className="min-w-0">
+                <span className="block text-[14px] truncate">
+                  {x.ru}{x.on === false ? " · выключен" : ""}
+                  {x.coins.length ? (
+                    <span className="text-[11px] ml-1.5" style={{ color: "var(--label-3)" }}>
+                      {expanded ? "▾" : "▸"} {x.coins.length}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="block text-[11px] mt-0.5" style={{ color: "var(--label-3)" }}>{note}</span>
+              </span>
+              <span className="text-[14px] font-semibold tabular-nums shrink-0" style={{ color: col }}>
+                {main}
+              </span>
+            </Press>
+            {expanded && x.coins.map((c, j) => (
+              <div key={c.symbol}
+                   className={`flex items-center justify-between gap-3 pl-8 pr-4 py-2 ${
+                     j === x.coins.length - 1 ? "hairline" : "hairline"}`}
+                   style={{ background: "rgba(255,255,255,.03)" }}>
+                <span className="min-w-0">
+                  <span className="block text-[13px] truncate" style={{ color: "var(--label-2)" }}>
+                    {c.symbol.replace("USDT", "")}
+                  </span>
+                  <span className="block text-[11px] mt-0.5" style={{ color: "var(--label-3)" }}>
+                    {[`${c.n} ${plural(c.n, "сделка", "сделки", "сделок")}`,
+                      c.winrate === null ? null : `${c.wins} из ${c.n - c.be}`,
+                      c.be ? `${c.be} в БУ` : null,
+                      rr(c.r)].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+                <span className="text-[13px] font-semibold tabular-nums shrink-0"
+                      style={{ color: tone(c.usd) }}>{money(c.usd, true)}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {base > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+          <span className="min-w-0">
+            <span className="block text-[14px] truncate">База процентов</span>
+            <span className="block text-[11px] mt-0.5" style={{ color: "var(--label-3)" }}>
+              капитал на начало периода
+            </span>
+          </span>
+          <span className="text-[14px] font-semibold tabular-nums shrink-0"
+                style={{ color: "var(--label-3)" }}>{money(base)}</span>
+        </div>
+      )}
+    </Glass>
+  );
 }
 
 function Rows({ rows }: { rows: { k: string; v: string; c?: string; note?: string }[] }) {

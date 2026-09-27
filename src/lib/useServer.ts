@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getMe, getPayments, getPositions, getSignals, getState, getTrades,
          hasApi, type ApiMe, type ApiPayment, type ApiPosition, type ApiSignal,
-         type ApiState, type ApiTrade, type Contour } from "./api";
+         type ApiState, type ApiTrade } from "./api";
 
 const STATE_MS = 5000;
 const TRADES_MS = 60000;
@@ -24,11 +24,6 @@ export type Server = {
   trades: ApiTrade[];
   signals: ApiSignal[];
   payments: ApiPayment[];
-  /** Какой контур показываем в аналитике и журнале. ПОЗИЦИЙ НЕ КАСАЕТСЯ: они
-   *  приходят все и всегда — это живое состояние счёта, а не аналитика, и
-   *  скрыв половину, мы сказали бы владельцу, что бот держит меньше. */
-  contour: Contour;
-  setContour: (c: Contour) => void;
   reload: () => void;
 };
 
@@ -40,22 +35,19 @@ export function useServer(): Server {
   const [trades, setTrades] = useState<ApiTrade[]>([]);
   const [signals, setSignals] = useState<ApiSignal[]>([]);
   const [payments, setPayments] = useState<ApiPayment[]>([]);
-  const [contour, setContourRaw] = useState<Contour>("normal");
-  const contourRef = useRef<Contour>("normal");
   const denied = useRef(false);
 
   const pull = useCallback(async (withTrades: boolean) => {
     if (!hasApi || denied.current) return;
     try {
-      const c = contourRef.current;
       const [m, s, p, sig] = await Promise.all([getMe(), getState(), getPositions(),
-                                                getSignals(c)]);
+                                                getSignals()]);
       setMe(m);
       setState(s);
       setPositions(p.positions);
       setSignals(sig.signals);
       if (withTrades) {
-        const [t, pay] = await Promise.all([getTrades(0, c), getPayments()]);
+        const [t, pay] = await Promise.all([getTrades(0), getPayments()]);
         setTrades(t.trades);
         setPayments(pay.payments);
       }
@@ -83,19 +75,11 @@ export function useServer(): Server {
     return () => { clearInterval(a); clearInterval(b); document.removeEventListener("visibilitychange", vis); };
   }, [pull]);
 
-  /* Смена источника ПЕРЕЧИТЫВАЕТ журнал немедленно, а не ждёт минутного
-     такта: переключатель, после которого минуту видно чужие цифры, читается
-     как сломанный. Само значение держим ещё и в ref — опрос идёт по таймеру и
-     замыкание с прежним значением давало бы гонку между тиком и переключением. */
-  const setContour = useCallback((c: Contour) => {
-    if (c === contourRef.current) return;
-    contourRef.current = c;
-    setContourRaw(c);
-    setTrades([]);
-    setSignals([]);
-    pull(true);
-  }, [pull]);
-
-  return { link, me, state, positions, trades, signals, payments, contour, setContour,
+  /* ЖУРНАЛ ТЯНЕТСЯ ЦЕЛИКОМ (`days=0`), а период режет экран у себя. Так
+     сделано ради календаря: выбор даты и промежутка не должен стоить похода в
+     сеть, иначе каждое касание дня в календаре — это запрос и мигающий экран.
+     Разрез по сценариям при этом считает СЕРВЕР по тем же границам: он видит
+     всю базу, а не последние 500 рядов. */
+  return { link, me, state, positions, trades, signals, payments,
            reload: () => pull(true) };
 }

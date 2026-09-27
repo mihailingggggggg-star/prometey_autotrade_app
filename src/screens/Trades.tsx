@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown, Maximize2, Search, Share2, X } from "lucide-react";
+import { CalendarDays, ChevronDown, Maximize2, Search, Share2, X } from "lucide-react";
 import { AlgoTag, Glass, GroupLabel, Press, ScenarioTag, Segmented, Title, portal, tone } from "../ui/kit";
+import { Calendar, rangeLabel, rangeMs, type Range } from "../ui/Calendar";
 import { Dash } from "./Dash";
 import { useApp } from "../lib/store";
 import type { Trade } from "../lib/mock";
@@ -12,7 +13,7 @@ import { stepOf } from "../lib/flow";
 import { windowStart } from "../lib/stats";
 import { cssVar } from "../ui/kit";
 import { haptic } from "../lib/tg";
-import { getHealth } from "../lib/api";
+import { getHealth, getDays, type ApiDay } from "../lib/api";
 import { drawShareCard, shareCardBlob, type ShareKind, type ShareTrade } from "../ui/ShareCard";
 import { CardPreview } from "../ui/CardPreview";
 
@@ -62,20 +63,49 @@ const reasonOf = (code: string, ru?: string) =>
 
 export function Trades() {
   const { trades } = useApp();
-  const { contour, setContour } = useApp();
   /* ПО УМОЛЧАНИЮ — СЕГОДНЯ, как и на главной: два экрана про одни и те же
      деньги не должны открываться на разных периодах. */
   const [p, setP] = useState<P>("d");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const inPeriod = useMemo(() => {
+  /* ── КАЛЕНДАРЬ: ТОЧНАЯ ДАТА И ТОЧНЫЙ ПРОМЕЖУТОК ────────────────────────────
+     Кнопки периодов отвечают «как дела в среднем»; вопрос «что было во вторник»
+     и «что было с 12 по 15» ими не задать вовсе. Поэтому календарь стоит РЯДОМ
+     с кнопками, а не вместо них.
+
+     Выбранный промежуток ГЛАВНЕЕ кнопки, и кнопка при этом гаснет: два активных
+     органа выбора периода на одном экране означали бы, что непонятно, какой из
+     них описывает цифры под ними. */
+  const [cal, setCal] = useState(false);
+  const [range, setRange] = useState<Range>(null);
+  const [days, setDays] = useState<ApiDay[]>([]);
+  const [tzMin, setTzMin] = useState(360);
+
+  /* Разметку дней тянем ОДИН РАЗ при открытии календаря, а не вместе с экраном:
+     пока владелец не открыл его, эти данные ему не нужны, а запрос стоит. */
+  useEffect(() => {
+    if (!cal || days.length) return;
+    const a = new AbortController();
+    void getDays(a.signal)
+      .then((d) => { setDays(d.days); setTzMin(d.tzOffsetMin); })
+      .catch(() => {});
+    return () => a.abort();
+  }, [cal, days.length]);
+
+  const bounds = useMemo(() => {
+    if (range) return rangeMs(range, tzMin);
     /* Границы периода — по КАЛЕНДАРНЫМ суткам Бишкека (см. lib/stats): было
        скользящее окно, и «Сегодня» показывало последние 24 часа, то есть
        половину вчерашнего дня в придачу. */
-    const from = windowStart(OPTS.find((o) => o.id === p)!.days);
-    return trades.filter((t) => t.closedAt >= from);
-  }, [trades, p]);
+    const d = OPTS.find((o) => o.id === p)!.days;
+    return { from: p === "all" ? 0 : windowStart(d), to: 0 };
+  }, [range, p, tzMin]);
+
+  const inPeriod = useMemo(
+    () => trades.filter((t) => t.closedAt >= bounds.from
+                              && (!bounds.to || t.closedAt < bounds.to)),
+    [trades, bounds]);
 
   const rows = useMemo(
     () => inPeriod.filter((t) => !q || t.symbol.toLowerCase().includes(q.toLowerCase())),
@@ -85,23 +115,35 @@ export function Trades() {
     <div className="pb-2">
       <Title sub="История сделок и статистика">Аналитика</Title>
 
-      {/* ── Источник ──────────────────────────────────────────────────────
-          Два контура считаются РАЗДЕЛЬНО и никогда не складываются в один
-          показатель. Дело не в числе контуров, а в сравнимости: сделка
-          контура охоты живёт часами и закрывается ценой, а алгос — минуты и
-          по угасанию подписи, и делает их кратно больше. В общей куче он
-          переписывает собой винрейт, среднюю длительность и число сделок, и
-          цифры перестают описывать хоть что-нибудь одно. */}
-      <div className="px-4 mb-2">
-        <Segmented value={contour} onChange={setContour} options={[
-          { id: "normal" as const, label: "Обычный режим" },
-          { id: "algo" as const, label: "Алгос" },
-        ]} />
+      <div className="px-4 flex items-center gap-2" data-coach="period">
+        <div className={`flex-1 min-w-0 transition-opacity ${range ? "opacity-40" : ""}`}>
+          <Segmented value={p} onChange={(v) => { setRange(null); setP(v); }}
+                     options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
+        </div>
+        {/* Кнопка календаря ПОДПИСЫВАЕТСЯ выбранным промежутком: иначе, свернув
+            календарь, владелец видит цифры за период, который ниоткуда не
+            прочитать. */}
+        <Press onClick={() => setCal((v) => !v)}
+               className="glass glass-flat shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl">
+          <CalendarDays size={16} style={{ color: range ? "var(--tint-soft)" : "var(--label-2)" }} />
+          {range && (
+            <span className="text-[12px] tabular-nums" style={{ color: "var(--tint-soft)" }}>
+              {rangeLabel(range)}
+            </span>
+          )}
+        </Press>
       </div>
 
-      <div className="px-4" data-coach="period">
-        <Segmented value={p} onChange={setP} options={OPTS.map((o) => ({ id: o.id, label: o.label }))} />
-      </div>
+      <AnimatePresence initial={false}>
+        {cal && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="px-4 pt-2">
+              <Calendar days={days} tzMin={tzMin} value={range} onChange={setRange} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
 
       {/* ── Дашборды ───────────────────────────────────────────────────────
@@ -110,25 +152,22 @@ export function Trades() {
           число значит. Без объяснения «профит-фактор 1.4» остаётся цифрой. */}
       <div className="mt-3">
         {/* «Всё» сеткой не ограничиваем: 3650 пустых столбиков вместо графика. */}
-        <Dash trades={rows} gridDays={p === "all" ? 0 : OPTS.find((o) => o.id === p)!.days}
-              periodLabel={OPTS.find((o) => o.id === p)!.label} contour={contour}
-              /* ТА ЖЕ граница, по которой отобран `rows`: иначе карточка
-                 сценариев описывала бы не тот период, что список под ней. */
-              fromMs={p === "all" ? 0 : windowStart(OPTS.find((o) => o.id === p)!.days)} />
+        <Dash trades={rows}
+              gridDays={range || p === "all" ? 0 : OPTS.find((o) => o.id === p)!.days}
+              periodLabel={range ? rangeLabel(range) : OPTS.find((o) => o.id === p)!.label}
+              /* ТЕ ЖЕ границы, по которым отобран `rows`: иначе карточка
+                 сценариев описывала бы не тот период, что список под ней.
+                 Считает её СЕРВЕР — он видит всю базу, а не последние 500
+                 рядов, — поэтому границы обязаны совпадать до миллисекунды. */
+              fromMs={bounds.from} toMs={bounds.to} />
       </div>
 
       {/* ── История ────────────────────────────────────────────────────────── */}
+      {/* Период повторён в заголовке намеренно: экран длинный, и, докрутив до
+          истории, человек уже не видит переключатель наверху — а без него
+          непонятно, за что эти сделки. */}
       <GroupLabel>История · {rows.length} {plural(rows.length, "сделка", "сделки", "сделок")}
-        {contour === "algo" ? " · алгос" : ""}</GroupLabel>
-      {/* Переключатель повторён у списка намеренно: экран длинный, и, докрутив
-          до истории, человек уже не видит верхний — а без него непонятно, чьи
-          это сделки. */}
-      <div className="px-4 mb-2.5">
-        <Segmented size="sm" value={contour} onChange={setContour} options={[
-          { id: "normal" as const, label: "Обычный режим" },
-          { id: "algo" as const, label: "Алгос" },
-        ]} />
-      </div>
+        {" · "}{range ? rangeLabel(range) : OPTS.find((o) => o.id === p)!.label.toLowerCase()}</GroupLabel>
       <div className="px-4 mb-2.5">
         <div className="glass glass-flat flex items-center gap-2 px-3.5 py-2.5">
           <Search size={17} style={{ color: "var(--label-2)" }} />
