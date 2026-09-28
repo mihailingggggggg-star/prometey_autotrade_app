@@ -192,6 +192,20 @@ export const equity = (() => {
   return out;
 })();
 
+/** Тумблеры контура охоты для демо-режима (сервера нет вовсе, показывать
+ *  нечего кроме заглушки). В боевом режиме список и русские имена ВСЕГДА
+ *  приходят с сервера (`store.HUNTER_SCENARIOS`) — здесь хардкод безвреден,
+ *  потому что реальный бот эти данные никогда не читает. */
+export const hunterScenarios: { key: string; ru: string; on: boolean }[] = [
+  { key: "s1", ru: "старт пампа", on: true },
+  { key: "s2", ru: "доход до цели", on: true },
+  { key: "s3", ru: "нож", on: false },
+  { key: "s4", ru: "шорт от коррекции", on: true },
+  { key: "s5", ru: "шорт в памп", on: true },
+  { key: "s6", ru: "шорт вылета", on: false },
+  { key: "s7", ru: "лонг отката вылета", on: true },
+];
+
 export const PLANS = [
   { id: "m1", months: 1, price: 20, label: "1 месяц" },
   { id: "m3", months: 3, price: 55, label: "3 месяца", note: "−8%" },

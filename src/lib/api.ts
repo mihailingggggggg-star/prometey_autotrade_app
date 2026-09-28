@@ -188,6 +188,15 @@ export type ApiState = {
     riskUsd: number; maxOpen: number; maxPosition: number;
     leverage: number; leverageMode: "max" | "fixed"; limitTtlMin: number;
     marginMode: string; useSignalTp: boolean; liqBuffer: number;
+    /** Тумблер контура охоты. Общий `enabled` его не заменяет: тот про приём
+     *  сигналов вообще, а этот — про то, торгует ли контур охоты. Может не
+     *  прийти со старого бота — тогда секции в настройках просто не будет. */
+    hunterEnabled?: boolean;
+    /** Тумблеры сценариев s1..s7. СПИСОК И РУССКИЕ ИМЕНА ПРИХОДЯТ С СЕРВЕРА
+     *  (`store.HUNTER_SCENARIOS`) — фронт их не хардкодит: свой перечень
+     *  отставал бы ровно на релиз, как уже отставал разрез по сценариям в
+     *  дашборде (s6 и s7 завелись 24.09.2026). Отсутствует у старого бота. */
+    scenarios?: { key: string; ru: string; on: boolean }[];
   };
   scheme: { long: string; short: string };
   openN: number; ts: number;
@@ -323,7 +332,13 @@ export type SettingsPatch = Partial<{
   limit_ttl_min: number; liq_buffer: number;
   leverage_mode: "max" | "fixed"; margin_mode: "isolated" | "cross";
   use_signal_tp: boolean;
-}>;
+  hunter_enabled: boolean;
+}> & {
+  /** Тумблеры сценариев `hunter_s1`..`hunter_s7`. Ключ типизирован индексом,
+   *  а не перечислен поштучно: список сценариев живёт на сервере
+   *  (`store.HUNTER_SCENARIOS`) и может вырасти без правки фронта. */
+  [K in `hunter_s${number}`]?: boolean;
+};
 
 export const putSettings = (patch: SettingsPatch) =>
   post<{ applied: Record<string, unknown>; rejected: string[]; state: ApiState }>(

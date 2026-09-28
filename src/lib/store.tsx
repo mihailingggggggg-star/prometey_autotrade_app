@@ -45,6 +45,17 @@ type Ctx = {
 
   settings: Settings; setSettings: (p: Partial<Settings>) => void;
 
+  /* КОНТУР ОХОТЫ: свой тумблер и тумблеры по сценарию. Отдельно от `Settings`
+     выше, потому что список и русские имена сценариев ПРИХОДЯТ С СЕРВЕРА
+     (`store.HUNTER_SCENARIOS`) — фронт их не хардкодит, иначе список отставал
+     бы ровно на релиз, как уже отставал разрез по сценариям в дашборде.
+     `null` у scenarios — старый бот, который их ещё не отдаёт: тогда список
+     переключателей просто не рисуется. */
+  hunterEnabled: boolean;
+  hunterScenarios: { key: string; ru: string; on: boolean }[] | null;
+  setHunterEnabled: (on: boolean) => void;
+  setHunterScenario: (key: string, on: boolean) => void;
+
   positions: M.Position[];
   closePosition: (id: string) => void;
   closeAllPositions: () => void;
@@ -177,6 +188,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     whaleOnly: false, leverageMode: "max", leverage: 20, limitTtlMin: 240,
     tpMode: "single", tpR: 1.5, beR: 1,
   });
+  /* Демо-копия тумблеров контура охоты: в демо-режиме сервера нет вовсе, и
+     переключать в интерфейсе нечего, кроме локальной заглушки — так же, как
+     `settings` выше живёт локально до подключения бота. */
+  const [demoHunter, setDemoHunter] = useState({
+    enabled: true, scenarios: M.hunterScenarios,
+  });
 
 
 
@@ -282,6 +299,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const blocked = owed > balance;
   const riskAlert = shown.riskUsd > deposit * 0.05;
 
+  /* Контур охоты показываем ЕГО настоящим состоянием, а не своим: та же
+     причина, что у `shown` выше. `scenarios` может не прийти со старого бота
+     — тогда список переключателей не рисуется вовсе, а не рисуется пустым. */
+  const hunterEnabled = server.state
+    ? Boolean(server.state.settings.hunterEnabled)
+    : demoHunter.enabled;
+  const hunterScenarios = server.state
+    ? (server.state.settings.scenarios ?? null)
+    : demoHunter.scenarios;
+
   const value: Ctx = {
     stage, setStage,
     user, setUser: (u) => setUserRaw((p) => ({ ...p, ...u })),
@@ -329,6 +356,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (p.limitTtlMin !== undefined) patch.limit_ttl_min = p.limitTtlMin;
       if (p.enabled !== undefined) return void act("enabled", () => API.putEnabled(p.enabled!));
       if (Object.keys(patch).length) void act("settings", () => API.putSettings(patch));
+    },
+    hunterEnabled, hunterScenarios,
+    setHunterEnabled: (on) => {
+      if (demo) return void setDemoHunter((h) => ({ ...h, enabled: on }));
+      void act("settings", () => API.putSettings({ hunter_enabled: on }));
+    },
+    setHunterScenario: (key, on) => {
+      if (demo) {
+        return void setDemoHunter((h) => ({
+          ...h, scenarios: h.scenarios.map((s) => (s.key === key ? { ...s, on } : s)),
+        }));
+      }
+      void act("settings", () => API.putSettings({ [`hunter_${key}`]: on } as API.SettingsPatch));
     },
     positions, feed, marketReady, link: server.link, demo,
     mode: server.state?.mode ?? "demo",

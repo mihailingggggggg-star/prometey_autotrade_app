@@ -421,7 +421,8 @@ function PlansSheet({ open, onClose, onBuy }: { open: boolean; onClose: () => vo
 
 /* ── Настройки бота (те же, что в Telegram-боте) ────────────────────────────── */
 function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { settings: s, setSettings, deposit, riskAlert, can, busy } = useApp();
+  const { settings: s, setSettings, deposit, riskAlert, can, busy,
+          hunterEnabled, hunterScenarios, setHunterEnabled, setHunterScenario } = useApp();
   const rec = Math.floor(deposit * 0.05);
   /* Значение ползунка во время перетяга живёт здесь, а не в настройках: пока
      палец не отпущен, это ещё не решение человека, и отправлять его боту
@@ -498,9 +499,49 @@ function BotSettings({ open, onClose }: { open: boolean; onClose: () => void }) 
           <Row last title="Жизнь лимитки" note="через сколько снимать непролившийся ордер"
                right={<b>{Math.round(s.limitTtlMin / 60)} ч</b>} />
         </Glass>
+
+        <HunterSection enabled={hunterEnabled} scenarios={hunterScenarios}
+                       onEnabled={setHunterEnabled} onScenario={setHunterScenario} />
         </fieldset>
       </div>
     </Sheet>
+  );
+}
+
+/* ── Контур охоты ───────────────────────────────────────────────────────────
+   Собственный отбор монет автотрейда (`hunter_*` у бота). Скринер только
+   считает и присылает сетапы — торгует ими бот, и решает он сам, читая эти
+   тумблеры на каждом такте сверки. Список сценариев и их русские имена
+   ПРИХОДЯТ С СЕРВЕРА (`store.HUNTER_SCENARIOS`): захардкодь их фронт, список
+   отставал бы ровно на релиз, как уже отставал разрез по сценариям в
+   дашборде мини-аппа. */
+function HunterSection({ enabled, scenarios, onEnabled, onScenario }: {
+  enabled: boolean;
+  scenarios: { key: string; ru: string; on: boolean }[] | null;
+  onEnabled: (v: boolean) => void;
+  onScenario: (key: string, v: boolean) => void;
+}) {
+  return (
+    <div>
+      <div className="text-[13px] mb-1.5 px-1" style={{ color: "var(--label-2)" }}>Контур охоты</div>
+      <Glass flat className="overflow-hidden">
+        <Row last={!scenarios || !scenarios.length}
+             title="Контур охоты торгует"
+             note="общий тумблер: расчёт ведёт скринер, эта настройка — про деньги бота"
+             right={<Toggle on={enabled} onChange={onEnabled} />} />
+        {scenarios && scenarios.map((sc, i) => (
+          <div key={sc.key} style={enabled ? undefined : { opacity: 0.55 }}>
+            <Row last={i === scenarios.length - 1}
+                 title={`${sc.key} · ${sc.ru}`}
+                 right={<Toggle on={sc.on} onChange={(v) => onScenario(sc.key, v)} />} />
+          </div>
+        ))}
+      </Glass>
+      <p className="text-[12px] mt-2 px-1 leading-snug" style={{ color: "var(--label-2)" }}>
+        Выключение не закрывает открытые позиции — только запрещает новые входы;
+        применяется в течение минуты.
+      </p>
+    </div>
   );
 }
 
