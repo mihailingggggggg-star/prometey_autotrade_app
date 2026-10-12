@@ -1,7 +1,7 @@
 {
-  "name": "PROMETHEUS · автотрейд",
-  "short_name": "PROMETHEUS",
-  "description": "Состояние торгового счёта, позиции и управление ботом",
+  "name": "Solana Swing Bot · демо",
+  "short_name": "Swing Bot",
+  "description": "Сигналы накопления Solana, демо-позиции и аналитика",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

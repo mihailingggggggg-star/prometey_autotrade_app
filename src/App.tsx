@@ -1,120 +1,105 @@
-import { useEffect, useState } from "react";
-import { ensure as ensurePush } from "./lib/push";
+/**
+ * Каркас демо-приложения: табы, экраны и глобальное состояние связи.
+ *
+ * Одна ошибка на всё приложение живёт здесь: если сервер не отвечает, человек
+ * видит это сразу наверху, независимо от того, на какой вкладке находится.
+ * Кнопка «Обновить» поднимает общий счётчик обновления — экраны перечитывают
+ * данные немедленно, не дожидаясь своего интервала опроса.
+ *
+ * Детальный экран монеты — наложение ПОВЕРХ всего, а не пятая вкладка: он
+ * открывается и из «Сигналов», и из «Позиций», и при возврате человек должен
+ * попасть туда, откуда пришёл.
+ */
+import { useCallback, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { TabBar, TABS_ORDER, type Tab } from "./nav/TabBar";
-import { useApp } from "./lib/store";
-import { Auth } from "./screens/Auth";
-import { Onboarding } from "./screens/Onboarding";
-import { Home } from "./screens/Home";
-import { Market } from "./screens/Market";
-import { Trades } from "./screens/Trades";
-import { Cabinet } from "./screens/Cabinet";
-import { DebtGate } from "./screens/DebtGate";
-import { Lock, useLock } from "./screens/Lock";
-import { WebLogin } from "./screens/WebLogin";
-import { BioOffer } from "./screens/BioOffer";
-import { hasSession } from "./lib/api";
-import { useSwipe } from "./lib/swipe";
-import { inTelegram } from "./lib/tg";
-import { Modal, Press } from "./ui/kit";
-import { haptic } from "./lib/tg";
-import { TriangleAlert } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import { health, listAlerts } from "./lib/api";
+import { useApi } from "./lib/useApi";
+import { haptic } from "./lib/haptics";
+import { TabBar, type Tab } from "./nav/TabBar";
+import { Press, SPRING } from "./ui/kit";
+import { Feed } from "./screens/Feed";
+import { Positions } from "./screens/Positions";
+import { Analytics } from "./screens/Analytics";
+import { Profile } from "./screens/Profile";
+import { CoinDetail, type CoinRef } from "./screens/CoinDetail";
 
 export function App() {
-  const { stage, setStage, positions, blocked, link, registered, error, clearError } = useApp();
-  const [tab, setTab] = useState<Tab>("home");
-  const lock = useLock();
+  const [tab, setTab] = useState<Tab>("signals");
+  const [coin, setCoin] = useState<CoinRef | null>(null);
+  // Общий ключ обновления: действия на экранах меняют его, и все списки
+  // перечитываются сразу, а не по своему таймеру.
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  /* Свайп листает вкладки по тому же порядку, в котором они стоят в панели:
-     жест и панель обязаны говорить одно и то же, иначе свайп ощущается
-     случайным. Места, где горизонтальный жест принадлежит содержимому
-     (график, ряды с прокруткой), помечены data-noswipe и жест не перехватывают. */
-  const step = (d: number) => {
-    const i = TABS_ORDER.indexOf(tab);
-    const next = TABS_ORDER[Math.min(TABS_ORDER.length - 1, Math.max(0, i + d))];
-    if (next !== tab) { haptic.select(); setTab(next); }
-  };
-  const swipe = useSwipe({ onLeft: () => step(1), onRight: () => step(-1) });
+  const h = useApi(health, 15000, [refreshKey]);
+  const alerts = useApi(() => listAlerts(true), 15000, [refreshKey]);
+  const unseen = alerts.data?.length ?? 0;
 
-  /* Регистрация считается пройденной, когда ПОДТВЕРЖДЁН НОМЕР — а не когда
-     бот узнал нас по подписи. Подпись говорит лишь «это тот же Telegram-
-     аккаунт»; номер — то, по чему человека узнают и по чему выдаются права.
-     Пропусти мы регистрацию по одной подписи, новый человек попадал бы сразу
-     в кабинет, минуя единственный её шаг. */
-  useEffect(() => {
-    if (link === "ok" && registered && stage === "auth") setStage("app");
-  }, [link, registered, stage, setStage]);
-
-  /* Подписка на уведомления ВОССТАНАВЛИВАЕТСЯ при запуске.
-     Она живёт в браузере и исчезает сама: система чистит её при долгом
-     простое, сервер выбрасывает мёртвые адреса. Без этого шага человек один
-     раз включил уведомления и молча перестал их получать, причём тумблеры
-     продолжали показывать «включено» — интерфейс уверял в том, чего нет.
-     Сюда же попадает случай «включили, когда у бота ещё не было ключей». */
-  useEffect(() => { if (link === "ok") void ensurePush(); }, [link]);
+  const refresh = useCallback(() => {
+    haptic.tap();
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   return (
-    /* h-full, а не min-h-full: прокручивается main, страница стоит на месте —
-       иначе панель вкладок уезжала бы вместе с контентом. */
-    <div className="relative h-full">
-      <div className="mesh" />
+    <div className="relative h-full flex flex-col">
+      <div className="mesh" aria-hidden />
 
-      {/* Замок стоит ПЕРЕД всем: под ним лежит ключ доступа к счёту, и
-          показывать что-либо до подтверждения незачем. */}
-      {lock.locked && <Lock busy={lock.busy} ask={lock.ask} />}
+      {/* Верхняя полоса: марка, режим данных, кнопка обновления, ошибка связи */}
+      <header className="relative z-20 shrink-0 chrome hairline" style={{ paddingTop: "var(--safe-t)" }}>
+        <div className="flex items-center gap-2 px-4 h-[46px]">
+          <span className="text-[13px] font-semibold tracking-[-0.01em]">SOLANA SWING BOT</span>
+          {h.data && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full font-bold"
+                  style={h.data.mode === "live"
+                    ? { background: "color-mix(in srgb, var(--green) 18%, transparent)", color: "var(--green)" }
+                    : { background: "var(--bg-elev)", color: "var(--label-2)" }}>
+              {h.data.mode === "live" ? "LIVE" : "MOCK"}
+            </span>
+          )}
+          <div className="flex-1" />
+          <Press onClick={refresh} aria-label="Обновить" className="rounded-full p-1.5">
+            <span className="flex items-center justify-center w-8 h-8 rounded-full"
+                  style={{ background: "var(--bg-elev)" }}>
+              <RefreshCw size={16} />
+            </span>
+          </Press>
+        </div>
+        {h.error && (
+          <div className="px-4 pb-2 flex items-start gap-2">
+            <span className="flex-1 text-[12px] leading-snug" style={{ color: "var(--orange)" }}>{h.error}</span>
+            <Press onClick={refresh}>
+              <span className="text-[12px] font-semibold shrink-0" style={{ color: "var(--tint-soft)" }}>повторить</span>
+            </Press>
+          </div>
+        )}
+      </header>
 
-      {/* Вне Telegram и без билета показывать демонстрацию бессмысленно:
-          человек пришёл за своим счётом. Сразу вход — номер и код из
-          Telegram. Telegram нужен ровно для доставки шести цифр. */}
-      {!lock.locked && !inTelegram && !hasSession() && <WebLogin />}
+      {/* Прокручивается main, а не страница: панель вкладок должна оставаться
+          приклеенной к низу. */}
+      <main className="scroll relative z-10 flex-1 min-h-0"
+            style={{ paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 22px)", overscrollBehavior: "contain" }}>
+        {tab === "signals" && <Feed refreshKey={refreshKey} onOpen={setCoin} />}
+        {tab === "positions" && <Positions refreshKey={refreshKey} onOpen={setCoin} />}
+        {tab === "analytics" && <Analytics refreshKey={refreshKey} />}
+        {tab === "profile" && <Profile refreshKey={refreshKey} />}
+      </main>
 
-      {!lock.locked && (inTelegram || hasSession()) && stage === "auth" && <Auth />}
+      <TabBar
+        tab={tab}
+        onTab={(t) => { setCoin(null); setTab(t); }}
+        badge={{ positions: unseen }}
+      />
 
-      {!lock.locked && (inTelegram || hasSession()) && stage !== "auth" && (
-        <>
-          <main className="relative z-10 h-full scroll" {...swipe}
-                style={{ paddingTop: "var(--safe-t)",
-                         paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 26px)" }}>
-            <AnimatePresence mode="wait">
-              <motion.div key={tab}
-                initial={{ opacity: 0, y: 10, scale: 0.995 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -6, scale: 0.997 }}
-                transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}>
-                {tab === "home" && <Home onTab={setTab} />}
-                {tab === "market" && <Market />}
-                {tab === "trades" && <Trades />}
-                {tab === "cabinet" && <Cabinet />}
-              </motion.div>
-            </AnimatePresence>
-          </main>
-          <TabBar tab={tab} onTab={setTab} badge={{ market: positions.length }} />
-          {stage === "onboarding" && <Onboarding tab={tab} onTab={setTab} />}
-          <DebtGate open={blocked && stage === "app"} />
-          {/* Замок предлагаем сразу после входа: в глубине кабинета его не
-              найдут, а «больше не вводить код» понятно именно сейчас. */}
-          <BioOffer />
-          {/* Отказ сервера показываем ТЕКСТОМ, как он пришёл. «Не получилось»
-              без причины заставляет гадать, а причина у бота всегда конкретная:
-              значение вне диапазона, нет боевых ключей, биржа отбила ордер. */}
-          <Modal open={!!error} onClose={clearError}>
-            <div className="text-center">
-              <div className="mx-auto mb-3 flex items-center justify-center w-12 h-12 rounded-full"
-                   style={{ background: "color-mix(in srgb, var(--orange) 18%, transparent)" }}>
-                <TriangleAlert size={22} style={{ color: "var(--orange)" }} />
-              </div>
-              <h3 className="text-[19px] font-bold">Не выполнено</h3>
-              <p className="text-[14px] mt-1.5 leading-snug" style={{ color: "var(--label-2)" }}>
-                {error}
-              </p>
-              <Press onClick={clearError} className="block w-full mt-5">
-                <div className="py-3 rounded-[16px] text-center text-[16px] font-semibold text-white"
-                     style={{ background: "var(--tint-grad)" }}>Понятно</div>
-              </Press>
-            </div>
-          </Modal>
-        </>
-      )}
+      <AnimatePresence>
+        {coin && (
+          <motion.div key="coin-detail"
+                      initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+                      transition={SPRING}
+                      className="absolute inset-0 z-50">
+            <CoinDetail coin={coin} onBack={() => setCoin(null)} onChanged={refresh} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

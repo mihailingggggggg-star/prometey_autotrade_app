@@ -272,8 +272,14 @@ export interface DemoSettings {
 }
 
 export interface FreeRideSettings {
+  /** Триггер фиксации половины объёма: рост от входа, %. */
   tp1_percent: number;
+  /** Доля объёма, фиксируемая на триггере (0..1). */
   tp1_fraction: number;
+  /** Цель 2 для «бесплатного полёта», рост от входа, %. По умолчанию 400 (x5).
+   *  Обязана быть заметно выше tp1_percent: иначе остаток продаётся сразу после
+   *  фиксации половины и стратегия теряет смысл. */
+  tp2_percent: number;
 }
 
 export interface Settings {
@@ -334,3 +340,28 @@ export interface ClosePositionRequest {
 export interface ApiErrorBody {
   error: { code: string; message: string };
 }
+
+/* ─────────────── формы ответов на действия ───────────────
+ * Зафиксированы отдельными типами, потому что именно здесь части расходились:
+ * клиент рисовал экран по одному предположению, сервер отвечал другим, и
+ * расхождение не ловилось ни типами, ни сборкой. Менять только вместе с
+ * реализацией на обеих сторонах.
+ */
+
+/** Открытие, докупка и перенос ТП отдают саму позицию. */
+export type PositionResponse = Position;
+
+/** Закрытие отдаёт и позицию, и исполнение — экрану нужны и итог, и цена выхода. */
+export interface ClosePositionResponse {
+  position: Position;
+  fill: Fill;
+}
+
+/** Пополнение депозита отдаёт пересчитанную аналитику: баланс меняется сразу. */
+export type DepositResponse = AnalyticsSummary;
+
+/** Отметка алерта просмотренным отдаёт его же — экран не гадает, что стало. */
+export type AlertSeenResponse = Alert;
+
+/** Сохранение ключей отдаёт их статусы (значения не возвращаются никогда). */
+export type KeysUpdateResponse = KeysStatus;

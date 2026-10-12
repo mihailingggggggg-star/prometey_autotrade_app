@@ -52,21 +52,27 @@ prometey_autotrade_app/
     └── ui/{PriceChart.tsx,kit.tsx,Plot.tsx,Logo.tsx}
 ```
 
-**Сохраняем как есть** (переиспользуется): `src/theme.css`, `src/main.tsx`, `index.html`,
-`src/ui/kit.tsx`, `src/ui/Plot.tsx`, `src/ui/Logo.tsx`, `src/ui/TradeChart.tsx` (рабочий пример
-`lightweight-charts` v5 — читать как образец API), `src/lib/format.ts`, `src/lib/pwa.ts`,
+**Сохраняем как есть** (переиспользуется): `index.html`, `src/theme.css`, `src/ui/kit.tsx`,
+`src/ui/Plot.tsx`, `src/ui/Logo.tsx`, `src/ui/TradeChart.tsx` (рабочий пример `lightweight-charts` v5 —
+читать как образец API и как источник готовых приёмов), `src/lib/format.ts`, `src/lib/pwa.ts`,
 `src/nav/TabBar.tsx` (переделывается под 4 таба).
 
-**Удаляем** (фьючерсная логика): `src/screens/{Auth,WebLogin,Connect,Onboarding,AddToHome,Home,Dash,Market,Trades,Cabinet,ChartTools,Diag,Notifications,Lock,BioOffer,DebtGate}.tsx`,
-`src/lib/{api.ts(переписывается),mock.ts,agg.ts,market.ts,useMarket.ts,flow.ts,useFlow.ts,liquidity.ts,stats.ts,store.tsx,swipe.ts,tg.ts,lock.ts,push.ts,useServer.ts,boot.ts}`.
-Старые файлы смотреть через `git show HEAD~1:src/<путь>` (история сохраняется).
+**Переписываются заново:** `src/main.tsx` (вместо bootstrap-цепочки `bootApi`/`initTelegram` —
+импорт `theme.css` и рендер `App`), `src/App.tsx` (вместо фьючерсного — табы и экраны §9).
+
+**Уже удалены** (фьючерсная логика): все прежние `src/screens/*`, `src/mount.tsx` и
+`src/lib/{api,mock,agg,market,useMarket,flow,useFlow,liquidity,stats,store,swipe,tg,lock,push,useServer,boot}.ts(x)`.
+История сохранена — старый файл доступен как `git show HEAD~1:src/<путь>`.
 
 ## 2. Режимы работы
 
 - `DATA_MODE=mock` (по умолчанию) — всё считается по синтетике, ключи не нужны, сеть не нужна.
-  В mock-режиме **виртуальные часы ускорены**: каждый цикл обслуживания двигает мир вперёд на
-  `demo.tick_minutes` (по умолчанию 30). Это позволяет за один вечер увидеть, как позиция доходит
-  до x2, срабатывает Free Riding, истекает time-stop и просаживается ликвидность.
+  В mock-режиме **виртуальные часы ускорены**: каждый цикл обслуживания (60 с) двигает мир вперёд на
+  `demo.tick_minutes` (по умолчанию 360 — то есть шесть виртуальных часов за минуту реального времени,
+  примерно 15 виртуальных суток за реальный час). Это позволяет за один вечер увидеть, как позиция
+  доходит до x2, срабатывает Free Riding, истекает time-stop и просаживается ликвидность.
+  Медленный тик делает демо-контур мёртвым: растущий токен за шесть виртуальных часов не проходит
+  и процента пути, и Free Riding не наступает никогда.
 - `DATA_MODE=live` — DexScreener / RugCheck / Helius / Jupiter / Gemini. Интерфейс источников
   одинаков в обоих режимах: `screener.ts` и `demo.ts` не знают, откуда данные.
 
@@ -142,6 +148,9 @@ prometey_autotrade_app/
 3. **Free Riding:** при цене `+tp_percent` (по умолчанию +100%, то есть x2) движок автоматически
    фиксирует `tp1_fraction` (50%) объёма: возвращён вложенный капитал, риск = $0, статус → `free_ride`,
    алерт `free_ride`. Остаток 50% летит бесплатно до ручного выхода, до цели 2 или до time-stop/liq-drain.
+   **Цель 2 по умолчанию x5** (`free_ride.tp2_percent = 400`), а не +100%: если цель совпадает с
+   триггером, «бесплатный полёт» длится один тик обслуживания и вся идея стратегии исчезает —
+   остаток продаётся сразу после фиксации половины.
 4. **Time-stop:** нет импульса за `time_stop_days` (по умолчанию 21, диапазон 14–30) → алерт `time_stop`
    с рекомендацией закрытия. Автозакрытия нет — решение за пользователем, факт фиксируется.
 5. **Liquidity drain:** ликвидность пула за 7 дней после входа упала более чем на `liq_drain_pct` (30%) →
@@ -166,8 +175,8 @@ screener:  {age_min:30, age_max:180, liq_min:20000, liq_max:150000, top10_max:15
             wash_filter:true, llm_filter:true, range_days:14, range_pct:18,
             drawdown_min:70, drawdown_max:90, holders_growth_min:3, maker_min:120}
 demo:      {start_balance:500, monthly_deposit:500, pool_fee_pct:0.25, slippage_min_pct:3,
-            slippage_max_pct:5, time_stop_days:21, liq_drain_pct:30, tick_minutes:30}
-free_ride: {tp1_percent:100, tp1_fraction:0.5}
+            slippage_max_pct:5, time_stop_days:21, liq_drain_pct:30, tick_minutes:360}
+free_ride: {tp1_percent:100, tp1_fraction:0.5, tp2_percent:400}
 ```
 Валидация — на сервере (типы, диапазоны, `min <= max`), каждое изменение — в `audit`.
 

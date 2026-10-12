@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { haptic } from "../lib/tg";
+import { haptic } from "../lib/haptics";
 import { LogoMark } from "./Logo";
 
 /** Вынести разметку из-под текущего поддерева в корень приложения.
@@ -240,47 +240,6 @@ export function Row({
 export { Toggle } from "./liquid";
 
 export const money = (v: number) => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
-/** Тег контура «алгос».
- *
- *  Сделки двух контуров лежат в одном журнале и выглядят одинаково, а живут
- *  по-разному: сигнал скринера — это уровень, который держат часами, а сделка
- *  алгоса — реакция на работающий в ленте алгоритм, живущая минуты. Без метки
- *  строка «SUI −1.2% · 3 мин» в истории читалась бы как провал сигнала, хотя
- *  сигнала не было вовсе.
- *
- *  У скринерских сделок тега НЕТ намеренно: их большинство, и подписывать
- *  каждую «скринер» значит добавить шум ради симметрии. */
-export function ScenarioTag({ scenario, className = "" }:
-                            { scenario?: string; className?: string }) {
-  /* ПО КАКОМУ СЦЕНАРИЮ вошли. Сторона и монета отвечают «что и куда», а
-     сценарий — «почему мы здесь»: пять сетапов контура ведутся по-разному и
-     закрываются по разным причинам, и без метки строки выглядят одинаково.
-
-     Приглушённо, а не акцентом: это справка, а не оценка, и спорить за
-     внимание с результатом сделки она не должна. */
-  if (!scenario || scenario === "без сценария") return null;
-  return (
-    <span className={"px-1.5 py-0.5 rounded-md text-[11px] font-medium shrink-0 " + className}
-          style={{ background: "var(--bg-elev)", color: "var(--label-2)" }}>
-      {scenario}
-    </span>
-  );
-}
-
-export function AlgoTag({ source, className = "" }: { source?: string; className?: string }) {
-  if (source !== "algo") return null;
-  return (
-    /* Заливка акцентом, а не акцентный текст: красный — цвет убытка в числах,
-       и красное слово рядом с красным минусом читалось бы как часть результата.
-       Акцент в этой теме живёт на ПОВЕРХНОСТЯХ (см. theme.css), текст на нём
-       белый — так тег остаётся меткой, а не оценкой. */
-    <span className={"px-1.5 py-0.5 rounded-md text-[11px] font-semibold shrink-0 " + className}
-          style={{ background: "var(--tint-grad)", color: "#fff" }}>
-      алгос
-    </span>
-  );
-}
-
 export const tone = (v: number) => (v > 0 ? "var(--green)" : v < 0 ? "var(--red)" : "var(--label-2)");
 
 /**

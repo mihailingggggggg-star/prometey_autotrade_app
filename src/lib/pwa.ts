@@ -14,16 +14,12 @@
  *    ПОЛНЫЙ адрес текущей сессии, а ссылку на него подменяем на лету.
  */
 
-import { inTelegram } from "./tg";
-
 const BASE = import.meta.env.BASE_URL || "/";
 
 export const standalone = () => {
-  // Внутри Telegram браузерной обвязки тоже нет, и display-mode там может
-  // оказаться standalone. Но это ОКНО МЕССЕНДЖЕРА, а не установленное
-  // приложение: сочти мы его установленным, предложение вынести ярлык на
-  // рабочий стол исчезло бы ровно там, где оно и нужно.
-  if (inTelegram) return false;
+  // Telegram-обвязки в демо-контуре больше нет, поэтому проверять «мы внутри
+  // мессенджера?» не нужно: остаётся только честный признак установленного
+  // приложения (display-mode) плюс нестандартный флаг iOS.
   return window.matchMedia("(display-mode: standalone)").matches ||
     // iOS до сих пор сообщает об этом своим нестандартным способом.
     (navigator as unknown as { standalone?: boolean }).standalone === true;
@@ -35,8 +31,8 @@ let blobUrl = "";
  *  ярлык: в этот момент в адресе уже есть и билет, и адрес API. */
 export function personalizeManifest(startUrl: string = location.href) {
   const doc = {
-    name: "PROMETHEUS · автотрейд",
-    short_name: "PROMETHEUS",
+    name: "SOLANA SWING BOT · демо",
+    short_name: "SWING BOT",
     start_url: startUrl,
     scope: BASE,
     display: "standalone",
