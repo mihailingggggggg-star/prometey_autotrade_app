@@ -1,6 +1,19 @@
 /**
  * index.ts — HTTP-роутер демо-контура (node:http), порт 8788, только 127.0.0.1.
  *
+ * Здесь же, тем же процессом и на том же порту, отдаётся собранный интерфейс из
+ * каталога STATIC_DIR (по умолчанию ./dist рядом с репозиторием). Это осознанное
+ * решение: интерфейс и API живут по одному origin — нет CORS, нет второго
+ * тоннеля, а единственный адрес проще закрыть. Порт по умолчанию слушает только
+ * 127.0.0.1. Если интерфейс не собран, сервер не падает: он работает как прежде
+ * (только API) и пишет в stderr одну строку «интерфейс не собран, отдаю только API».
+ *
+ * /api/* всегда приоритетнее статики. Остальные пути отдаются файлами из
+ * STATIC_DIR (GET/HEAD) с SPA-фолбэком: путь без расширения → index.html, с
+ * расширением → 404. Путь разрешается через path.resolve и проверяется на
+ * принадлежность корню статики (с учётом симлинков) ДО чтения файла — запрос не
+ * может выйти за пределы STATIC_DIR.
+ *
  * Формы ответов обязаны буквально совпадать с shared/types.ts: этот файл —
  * единственное место, где строки БД превращаются в DTO для клиента.
  * Ошибки — {"error":{"code","message"}} со статусом 4xx/5xx. Ожидаемые отказы
@@ -9,8 +22,10 @@
  * сообщения, без секретов (stdout занят приложением, логов туда не шлём).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream, realpathSync, statSync } from "node:fs";
+import { basename, extname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { readDataMode, getEnv, getEnvNum, ApiError } from "./config.ts";
+import { readDataMode, getEnv, getEnvNum, ApiError, REPO_ROOT } from "./config.ts";
 import {
   ensureClock,
   virtualNow,
@@ -156,6 +171,132 @@ function numBody(body: Record<string, unknown>, key: string): number {
   // Возвращаем NaN, чтобы штатные проверки суммы/идентификатора отсекли поле.
   if (v === null || v === undefined || v === "") return Number.NaN;
   return Number(v);
+}
+
+/* ─────────────── статика (собранный интерфейс) ─────────────── */
+
+/** MIME только для того, что реально кладёт Vite-сборка. Остальное — octet-stream. */
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webmanifest": "application/manifest+json",
+  ".woff2": "font/woff2",
+};
+
+interface StaticCtx {
+  root: string;
+  realRoot: string;
+}
+
+/** Корень статики из STATIC_DIR (по умолчанию ./dist). null — каталога нет. */
+function resolveStaticCtx(): StaticCtx | null {
+  const dir = resolve(REPO_ROOT, getEnv("STATIC_DIR") || "./dist");
+  try {
+    if (!statSync(dir).isDirectory()) return null;
+    return { root: dir, realRoot: realpathSync(dir) };
+  } catch {
+    return null;
+  }
+}
+
+/** Путь внутри корня? Сравнение с учётом разделителя, чтобы /dist-extra не проходил. */
+function isInside(root: string, p: string): boolean {
+  if (p === root) return true;
+  const r = root.endsWith(sep) ? root : root + sep;
+  return p.startsWith(r);
+}
+
+/**
+ * Разрешить URL-путь в существующий файл внутри корня статики — или null.
+ * Два барьера: path.resolve (ловит «..» после декодирования) и realpath
+ * (ловит симлинк из корня наружу). Файл читается только после обеих проверок.
+ */
+function safeResolve(ctx: StaticCtx, decodedPath: string): string | null {
+  const abs = resolve(ctx.root, decodedPath.replace(/^\/+/, ""));
+  if (!isInside(ctx.root, abs)) return null;
+  let real: string;
+  try {
+    real = realpathSync(abs);
+  } catch {
+    return null; // не существует
+  }
+  if (!isInside(ctx.realRoot, real)) return null; // симлинк наружу
+  return real;
+}
+
+/**
+ * Есть ли «расширение» у последнего сегмента. Ведём по точке, а не по
+ * path.extname: для /.env extname пуст, и такой запрос (файл, а не SPA-маршрут)
+ * не должен получать index.html.
+ */
+function hasExtension(p: string): boolean {
+  return p.slice(p.lastIndexOf("/") + 1).includes(".");
+}
+
+function contentType(abs: string): string {
+  return MIME[extname(abs).toLowerCase()] ?? "application/octet-stream";
+}
+
+function sendFile(res: ServerResponse, abs: string, method: string): void {
+  const info = statSync(abs);
+  const noCache = basename(abs) === "index.html";
+  res.writeHead(200, {
+    "content-type": contentType(abs),
+    "content-length": String(info.size),
+    // index.html — точка входа: не кэшируем, иначе клиент застрянет на старой
+    // версии. Остальное — файлы с хэшем в имени, их можно кэшировать навсегда.
+    "cache-control": noCache ? "no-cache" : "public, max-age=31536000, immutable",
+  });
+  if (method === "HEAD") {
+    res.end();
+    return;
+  }
+  createReadStream(abs).pipe(res);
+}
+
+function serveStatic(
+  res: ServerResponse,
+  rawPath: string,
+  ctx: StaticCtx,
+  method: string,
+): void {
+  // URL.pathname приходит процент-кодированным; декодируем сами (URL нормализует
+  // %2e, но %2f остаётся). Битый процент — 400, а не 500.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    throw new ApiError("invalid_path", 400, "некорректное кодирование в пути запроса");
+  }
+
+  // 0. Попытка выйти за корень (после декодирования «..») — 404 сразу, без
+  // SPA-фолбэка: даже index.html не должен маскировать обход пути.
+  if (!isInside(ctx.root, resolve(ctx.root, decoded.replace(/^\/+/, "")))) {
+    throw new ApiError("not_found", 404, `файл ${rawPath} не найден`);
+  }
+
+  // 1. Прямое совпадение файла.
+  const direct = safeResolve(ctx, decoded);
+  if (direct && statSync(direct).isFile()) {
+    sendFile(res, direct, method);
+    return;
+  }
+
+  // 2. SPA-фолбэк: путь без расширения (/, /positions) → index.html.
+  if (!hasExtension(decoded)) {
+    const index = safeResolve(ctx, "index.html");
+    if (index && statSync(index).isFile()) {
+      sendFile(res, index, method);
+      return;
+    }
+  }
+
+  // 3. Расширение есть, но файла нет — 404 (а не index.html).
+  throw new ApiError("not_found", 404, `файл ${rawPath} не найден`);
 }
 
 /* ─────────────── маршруты ─────────────── */
@@ -356,32 +497,62 @@ const routes: Route[] = [
   },
 ];
 
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  staticCtx: StaticCtx | null,
+): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
   const method = (req.method ?? "GET").toUpperCase();
 
-  try {
-    let body: Record<string, unknown> = {};
-    if (method === "POST" || method === "PUT" || method === "PATCH") body = await readBody(req);
+  // /api/* всегда приоритетнее статики: иначе клиент получил бы index.html
+  // вместо JSON-ошибки на неизвестный API-маршрут.
+  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+    try {
+      let body: Record<string, unknown> = {};
+      if (method === "POST" || method === "PUT" || method === "PATCH") body = await readBody(req);
 
-    for (const route of routes) {
-      if (route.method !== method) continue;
-      const params = matchPath(route.pattern, url.pathname);
-      if (!params) continue;
-      const result = await route.handler({ params, url, body });
-      sendJson(res, 200, result ?? { ok: true });
+      for (const route of routes) {
+        if (route.method !== method) continue;
+        const params = matchPath(route.pattern, url.pathname);
+        if (!params) continue;
+        const result = await route.handler({ params, url, body });
+        sendJson(res, 200, result ?? { ok: true });
+        return;
+      }
+      throw new ApiError("not_found", 404, `маршрут ${method} ${url.pathname} не найден`);
+    } catch (err) {
+      sendError(res, err);
+    }
+    return;
+  }
+
+  // Всё остальное — статика (только чтение). Без собранного интерфейса сервер
+  // работает как прежде: отдаёт только API.
+  if (method === "GET" || method === "HEAD") {
+    if (!staticCtx) {
+      sendError(res, new ApiError("not_found", 404, `маршрут ${method} ${url.pathname} не найден`));
       return;
     }
-    throw new ApiError("not_found", 404, `маршрут ${method} ${url.pathname} не найден`);
-  } catch (err) {
-    sendError(res, err);
+    try {
+      serveStatic(res, url.pathname, staticCtx, method);
+    } catch (err) {
+      sendError(res, err);
+    }
+    return;
   }
+
+  sendError(res, new ApiError("not_found", 404, `маршрут ${method} ${url.pathname} не найден`));
 }
 
-/** Сервер без прослушивания — так его можно поднять в тестах на эфемерном порту. */
-export function createServerApp() {
+/**
+ * Сервер без прослушивания — так его можно поднять в тестах на эфемерном порту.
+ * Корень статики берётся из STATIC_DIR на момент вызова (тесты задают его сами);
+ * null означает «интерфейс не собран, только API».
+ */
+export function createServerApp(staticCtx: StaticCtx | null = resolveStaticCtx()) {
   return createServer((req, res) => {
-    void handle(req, res);
+    void handle(req, res, staticCtx);
   });
 }
 
@@ -391,7 +562,10 @@ function start(): void {
   ensureClock();
   const host = getEnv("API_HOST") || "127.0.0.1";
   const port = getEnvNum("API_PORT") || 8788;
-  const server = createServerApp();
+  const staticCtx = resolveStaticCtx();
+  // Одна понятная строка, чтобы деплой видел причину «нет интерфейса», а не молчал.
+  if (!staticCtx) console.error("[server] интерфейс не собран, отдаю только API");
+  const server = createServerApp(staticCtx);
 
   // Служебный цикл раз в 60 с: в mock двигает виртуальные часы и пересчитывает
   // позиции (Free Riding, time-stop, liq-drain), в live — просто обновляет их.
@@ -400,7 +574,8 @@ function start(): void {
   }, 60_000).unref?.();
 
   server.listen(port, host, () => {
-    console.error(`[server] демо-контур слушает http://${host}:${port} (режим ${readDataMode()})`);
+    const what = staticCtx ? "API и интерфейс" : "только API";
+    console.error(`[server] демо-контур слушает http://${host}:${port} (${what}, режим ${readDataMode()})`);
   });
   server.on("error", (e) => {
     console.error(`[server] не удалось поднять сервер: ${e.message}`);

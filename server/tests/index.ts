@@ -16,3 +16,4 @@ import "./routes.test.ts";
 import "./regression.test.ts";
 import "./hardening.test.ts";
 import "./strategy.test.ts";
+import "./static.test.ts";
