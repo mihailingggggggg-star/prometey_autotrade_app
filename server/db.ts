@@ -227,7 +227,7 @@ function ensureUniqueOpenIndex(d: DatabaseSync): void {
 
 export const DEFAULT_SETTINGS: Settings = {
   screener: {
-    age_min: 30,
+    age_min: 7,
     age_max: 180,
     liq_min: 20000,
     liq_max: 150000,
