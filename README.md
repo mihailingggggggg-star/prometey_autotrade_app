@@ -24,7 +24,7 @@ cp .env.example .env      # DATA_MODE=mock — работает без ключ�
 npm run dev:all           # сервер демо-контура + интерфейс одной командой
 ```
 
-Интерфейс: http://localhost:5178 · API: http://127.0.0.1:8788 (в dev-режиме Vite проксирует `/api`).
+Интерфейс: http://localhost:5178 · API: http://127.0.0.1:8790 (в dev-режиме Vite проксирует `/api`).
 
 Порознь: `npm run server` и `npm run dev`.
 

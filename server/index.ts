@@ -1,5 +1,5 @@
 /**
- * index.ts — HTTP-роутер демо-контура (node:http), порт 8788, только 127.0.0.1.
+ * index.ts — HTTP-роутер демо-контура (node:http), порт 8790, только 127.0.0.1.
  *
  * Здесь же, тем же процессом и на том же порту, отдаётся собранный интерфейс из
  * каталога STATIC_DIR (по умолчанию ./dist рядом с репозиторием). Это осознанное
@@ -561,7 +561,7 @@ export function createServerApp(staticCtx: StaticCtx | null = resolveStaticCtx()
 function start(): void {
   ensureClock();
   const host = getEnv("API_HOST") || "127.0.0.1";
-  const port = getEnvNum("API_PORT") || 8788;
+  const port = getEnvNum("API_PORT") || 8790;
   const staticCtx = resolveStaticCtx();
   // Одна понятная строка, чтобы деплой видел причину «нет интерфейса», а не молчал.
   if (!staticCtx) console.error("[server] интерфейс не собран, отдаю только API");

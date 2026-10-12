@@ -24,13 +24,13 @@
 ```
 prometey_autotrade_app/
 ├── package.json           # владелец: оркестратор (скрипты server/dev/dev:all, прокси)
-├── vite.config.ts         # владелец: оркестратор (proxy /api → 127.0.0.1:8788)
+├── vite.config.ts         # владелец: оркестратор (proxy /api → 127.0.0.1:8790)
 ├── .env.example           # владелец: оркестратор
 ├── docs/PLAN-V1.md        # этот документ
 ├── scripts/dev.mjs        # владелец: оркестратор (поднимает сервер + vite одной командой)
 ├── shared/types.ts        # владелец: оркестратор — замороженный контракт
 ├── server/                # владелец: исполнитель A
-│   ├── index.ts           # HTTP-роутер, порт 8788, слушает ТОЛЬКО 127.0.0.1
+│   ├── index.ts           # HTTP-роутер, порт 8790, слушает ТОЛЬКО 127.0.0.1
 │   ├── config.ts          # чтение/запись .env, дефолты, режим DATA_MODE
 │   ├── db.ts              # схема node:sqlite (§4) + хелперы
 │   ├── screener.ts        # воронка слоёв 1–5 (§6)
@@ -76,7 +76,7 @@ prometey_autotrade_app/
 - `DATA_MODE=live` — DexScreener / RugCheck / Helius / Jupiter / Gemini. Интерфейс источников
   одинаков в обоих режимах: `screener.ts` и `demo.ts` не знают, откуда данные.
 
-Сервер слушает только `127.0.0.1:8788`. В dev-режиме Vite проксирует `/api` на него — CORS не нужен.
+Сервер слушает только `127.0.0.1:8790`. В dev-режиме Vite проксирует `/api` на него — CORS не нужен.
 Авторизации в V1 нет: сервер локальный. **Перед выносом наружу (тоннель/сервер) обязателен этап
 аутентификации** — в текущем виде ключи и кошелёк доступны любому, кто дотянется до порта.
 
@@ -98,7 +98,7 @@ prometey_autotrade_app/
 - `alerts(id, ts, position_id, kind, message, severity, seen)` → `kind`: `free_ride | time_stop | liq_drain | tp_reached`; `severity`: `info | warn | critical`.
 - `keys_meta(key_name, is_set, updated_ts, preview)` — **значения ключей в БД не хранятся**, только в `.env`.
 
-## 4. HTTP API (JSON, `http://127.0.0.1:8788`)
+## 4. HTTP API (JSON, `http://127.0.0.1:8790`)
 
 Ошибки: `{"error":{"code":"...","message":"..."}}`, HTTP 4xx/5xx. Числа — числами. Типы — в `shared/types.ts`.
 
@@ -221,4 +221,4 @@ free_ride: {tp1_percent:100, tp1_fraction:0.5, tp2_percent:400}
 - Секреты только в `.env` (chmod 600); в API, БД и логах — только `set` и `preview`.
 - Команда `timeout` на машине владельца отсутствует — не использовать в скриптах.
 - Проверки: `npm run build`, `npx tsc -b --noEmit`, `node --test server/tests/`, ручной смоук
-  `curl -s localhost:8788/api/health`.
+  `curl -s localhost:8790/api/health`.

@@ -25,7 +25,7 @@ export default defineConfig({
        сборка одна и та же для локального запуска и для туннеля. */
     proxy: {
       "/api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8788",
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8790",
         changeOrigin: true,
       },
     },
