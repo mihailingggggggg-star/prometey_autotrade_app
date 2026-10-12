@@ -209,9 +209,12 @@ export function PriceChart({
     entryLine.current?.applyOptions({ price: entry });
 
     const p = drag ?? tp;
-    // Линия ТП на графике ОДНА — это цель 2 (остаток). Пока фиксации половины
-    // не было, подписываем её явно «Цель 2 (+X%)», чтобы не путать с триггером.
-    const tpTitle = position && !position.free_ride_done
+    // Линия ТП на графике ОДНА — это цель 2 (остаток). Подписываем явно
+    // «Цель 2 (+X%)», чтобы не путать с триггером фиксации, — но ТОЛЬКО в
+    // режиме free_ride. У manual-позиции никакого остатка после фиксации нет,
+    // это просто «ТП». Режим хранится в note ("tp_mode=manual").
+    const manual = position?.note.includes("manual") ?? false;
+    const tpTitle = position && !manual && !position.free_ride_done
       ? `Цель 2 (+${Math.round(position.tp_percent)}%)`
       : "ТП";
     if (p && p > 0 && !tpLine.current) {
@@ -224,7 +227,7 @@ export function PriceChart({
       s.removePriceLine(tpLine.current); tpLine.current = null;
     }
     if (tpLine.current && p) tpLine.current.applyOptions({ price: p, title: tpTitle });
-  }, [position?.entry_price, position?.free_ride_done, position?.tp_percent, tp, drag, ready]);
+  }, [position?.entry_price, position?.free_ride_done, position?.tp_percent, position?.note, tp, drag, ready]);
 
   /* ── перетаскивание ТП ── */
   const startDrag = useCallback((e: React.PointerEvent) => {

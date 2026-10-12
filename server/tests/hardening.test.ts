@@ -1,10 +1,14 @@
 /**
- * hardening.test.ts — правки второго круга ревью (не подтверждение старого кода):
+ * hardening.test.ts — правки круга ревью (не подтверждение старого кода):
  *  1) значение ключа не утекает в текст ошибки источника;
  *  3) .env не ломается значением с переводом строки, пробелы обрезаются;
- *  4) антидубль: второе открытие по монете — 409 position_exists;
- *  2) гонка двойного Free Riding: два параллельных чтения продают ровно 50%;
+ *  4) антидубль: второе открытие по монете — 409 position_exists; теперь ещё и
+ *     ПАРАЛЛЕЛЬНОЕ открытие (Promise.all) — одна позиция, второй вызов 409
+ *     (частичный UNIQUE-индекс idx_positions_token_open);
+ *  2) гонка двойного Free Riding: две защиты (очередь + атомарный захват) —
+ *     интеграционный сторож + отдельный сторож атомарного захвата (см. ниже);
  *  8) цель 2 в статусе free_ride закрывает остаток (tp_full) + пересчёт ТП на докупке;
+ * 10) позиция с tp1_fraction=1 из старой базы закрывается (tp_full), а не зависает;
  *  5) setTp отдаёт реальную цену, а не перенесённую линию;
  *  6) битый % в пути — 400, не 500;
  *  7) tp_percent=null не даёт мгновенный Free Riding;
@@ -16,8 +20,8 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { createServerApp } from "../index.ts";
 import { runScan } from "../screener.ts";
-import { openPosition, addToPosition, setTp, listPositions, advance } from "../demo.ts";
-import { setSettings, DEFAULT_SETTINGS, getDb } from "../db.ts";
+import { openPosition, addToPosition, setTp, listPositions, listTrades, advance } from "../demo.ts";
+import { setSettings, getSettings, DEFAULT_SETTINGS, getDb } from "../db.ts";
 import { httpJson, ApiError, writeEnvKeys, readEnvFile } from "../config.ts";
 import { getKeysStatus } from "../keys.ts";
 import type { Fill, Position } from "../../shared/types.ts";
@@ -104,9 +108,56 @@ test("антидубль: повторное открытие по той же �
   setSettings(DEFAULT_SETTINGS);
 });
 
+test("антидубль: ДВА ПАРАЛЛЕЛЬНЫХ открытия по одной монете — одна позиция, второй 409", async () => {
+  resetWorld();
+  setSettings(DEFAULT_SETTINGS);
+  const scan = await runScan();
+  const req = { signal_id: scan.ids[0], usd: 50, order_type: "market" as const };
+
+  // Индекс антидубля создан при инициализации БД.
+  const idx = getDb()
+    .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_positions_token_open'")
+    .get();
+  assert.ok(idx, "частичный UNIQUE-индекс idx_positions_token_open создан");
+
+  // Обе заявки проходят пред-проверку до await маркет-данных — закрывает индекс.
+  const results = await Promise.allSettled([openPosition(req), openPosition(req)]);
+  const ok = results.filter((r) => r.status === "fulfilled");
+  const bad = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+  assert.equal(ok.length, 1, "успешно проходит ровно одна заявка");
+  assert.equal(bad.length, 1, "вторая заявка отклонена");
+  assert.ok(bad[0].reason instanceof ApiError, "отказ — ApiError");
+  assert.equal((bad[0].reason as ApiError).code, "position_exists");
+  assert.equal((bad[0].reason as ApiError).status, 409);
+
+  const token = getDb().prepare("SELECT token_addr FROM signals WHERE id=?").get(scan.ids[0]) as { token_addr: string };
+  const cnt = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM positions WHERE token_addr=? AND status!='closed'")
+    .get(token.token_addr) as { n: number };
+  assert.equal(cnt.n, 1, "в базе ровно одна незакрытая позиция по монете");
+  setSettings(DEFAULT_SETTINGS);
+});
+
 /* ── 2. Гонка двойного Free Riding ── */
 
-test("гонка: два параллельных чтения не продают 50% дважды", async () => {
+/**
+ * Про «параллельность» — честно. Очередь updateQueue СЕРИАЛИЗУЕТ прогоны
+ * обслуживания: два обращения к API (advance и listPositions) НЕ выполняют
+ * runUpdatePositions одновременно, а строго друг за другом. Формулировка «два
+ * прохода идут в один момент» была бы неверной.
+ *
+ * Защит две, и они перекрываются:
+ *   A) атомарный захват free_ride_done (UPDATE ... WHERE free_ride_done=0);
+ *   B) очередь updateQueue (сериализация прогонов).
+ * Сторож для A — тест «атомарный захват» ниже: он краснеет, если флаг/захват
+ * перестанет запрещать повторную продажу. Сторож ровно для B построить нельзя:
+ * без очереди захват A всё равно не даёт второй продажи (наблюдаемый итог тот
+ * же), поэтому тест «два обращения разом» — интеграционный. Он проверяет, что
+ * ИТОГ держится при обслуживании из двух мест сразу, и краснеет, если снять
+ * ОБЕ защиты.
+ */
+
+test("гонка Free Riding: атомарный захват — повторный проход не продаёт второй раз", async () => {
   resetWorld();
   setSettings({
     ...DEFAULT_SETTINGS,
@@ -116,13 +167,52 @@ test("гонка: два параллельных чтения не продаю
   const scan = await runScan();
   // Цель 2 недостижима — позиция остаётся free_ride, тест только про захват.
   const pos = await openPosition({ signal_id: scan.ids[0], usd: 100, order_type: "market", tp_percent: 1000 });
+
+  // Догоняем до срабатывания фиксации (первый проход продаёт 50%).
+  let cur: Position = pos;
+  for (let i = 0; i < 500 && !cur.free_ride_done; i++) {
+    await advance();
+    cur = findPosition(await listPositions(), pos.id);
+  }
+  assert.ok(cur.free_ride_done, "Free Riding должен сработать");
+
+  const db = getDb();
+  const countTp50 = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM fills WHERE position_id=? AND kind='tp_50'").get(pos.id) as { n: number }).n;
+  assert.equal(countTp50(), 1, "после фиксации ровно один fill tp_50");
+
+  // Повторные проходы на достигнутой цене. Именно атомарный захват (флаг
+  // free_ride_done) обязан запретить вторую продажу: убери захват — здесь
+  // появится второй fill tp_50 и тест покраснеет.
+  for (let i = 0; i < 6; i++) {
+    await advance();
+    await listPositions();
+  }
+  assert.equal(countTp50(), 1, "повторные проходы не продают второй раз");
+
+  const alerts = db
+    .prepare("SELECT COUNT(*) AS n FROM alerts WHERE position_id=? AND kind='free_ride'")
+    .get(pos.id) as { n: number };
+  assert.equal(alerts.n, 1, "ровно один алерт free_ride");
+  setSettings(DEFAULT_SETTINGS);
+});
+
+test("гонка Free Riding: одновременный вызов advance + listPositions продаёт ровно один раз", async () => {
+  resetWorld();
+  setSettings({
+    ...DEFAULT_SETTINGS,
+    demo: { ...DEFAULT_SETTINGS.demo, tick_minutes: 60 },
+    free_ride: { tp1_percent: 1, tp1_fraction: 0.5 },
+  });
+  const scan = await runScan();
+  const pos = await openPosition({ signal_id: scan.ids[0], usd: 100, order_type: "market", tp_percent: 1000 });
   const originalQty = pos.qty;
 
   let cur: Position = pos;
   for (let i = 0; i < 500 && !cur.free_ride_done; i++) {
-    // Каждый шаг: тик двигает виртуальные часы, а параллельное чтение попадает
-    // в тот же момент — на пересечении порога два прохода обслуживания идут
-    // одновременно (ровно сценарий гонки из ревью).
+    // Обслуживание дёргают из двух мест сразу (таймер + опрос экранов). Очередь
+    // сериализует прогоны, а на случай наложения захват free_ride_done всё равно
+    // запретил бы вторую продажу. Итог обязан быть ровно один.
     const [, first] = await Promise.all([advance(), listPositions()]);
     cur = findPosition(first, pos.id);
   }
@@ -175,6 +265,51 @@ test("цель 2: остаток у free_ride закрывается по tp_pri
     .prepare("SELECT COUNT(*) AS n FROM alerts WHERE position_id=? AND kind='tp_reached'")
     .get(pos.id) as { n: number };
   assert.ok(tpAlerts.n >= 1, "алерт tp_reached при достижении цели 2");
+  setSettings(DEFAULT_SETTINGS);
+});
+
+/* ── 10. Позиция с нулевым объёмом не зависает ── */
+
+test("страховка: tp1_fraction=1 из старой базы закрывает позицию (tp_full), а не вешает её", async () => {
+  resetWorld();
+  setSettings({
+    ...DEFAULT_SETTINGS,
+    demo: { ...DEFAULT_SETTINGS.demo, tick_minutes: 60 },
+    free_ride: { ...DEFAULT_SETTINGS.free_ride, tp1_percent: 1, tp1_fraction: 0.5 },
+  });
+  // Значение из СТАРОЙ базы: валидация его больше не пропускает, но в данных оно есть.
+  getDb().prepare("UPDATE settings SET value_json=? WHERE key='free_ride.tp1_fraction'").run("1");
+  assert.equal(getSettings().free_ride.tp1_fraction, 1, "подготовка: в базе tp1_fraction=1");
+
+  const scan = await runScan();
+  // Цель 2 недостижима: закрытие обязано случиться страховкой на триггере, не по ТП.
+  const pos = await openPosition({ signal_id: scan.ids[0], usd: 100, order_type: "market", tp_percent: 1000 });
+
+  let cur: Position = pos;
+  for (let i = 0; i < 500 && cur.status !== "closed"; i++) {
+    await advance();
+    cur = findPosition(await listPositions(), pos.id);
+  }
+  assert.equal(cur.status, "closed", "позиция с нулевым объёмом обязана закрыться, а не висеть вечно");
+  assert.equal(cur.close_reason, "tp_full");
+  assert.equal(cur.qty, 0, "остаток обнулён");
+  assert.ok(cur.realized_usd > 0, "реализованный результат ненулевой (капитал вернулся)");
+
+  // История: listTrades берёт только status='closed' — сделка обязана туда попасть.
+  assert.ok(listTrades(100).some((t) => t.position_id === pos.id), "сделка попала в /api/trades");
+
+  // Дополнительные тики не «переоткрывают» и не дублируют закрытие.
+  for (let i = 0; i < 5; i++) await advance();
+  const after = getDb().prepare("SELECT qty, status FROM positions WHERE id=?").get(pos.id) as { qty: number; status: string };
+  assert.equal(after.status, "closed");
+  assert.equal(after.qty, 0);
+
+  // Защита на будущее: НОВОЕ значение 1 отвергается валидацией.
+  assert.throws(
+    () => setSettings({ free_ride: { tp1_fraction: 1 } }),
+    (e: unknown) => e instanceof ApiError && (e as ApiError).code === "invalid_settings",
+    "новое tp1_fraction=1 не проходит валидацию",
+  );
   setSettings(DEFAULT_SETTINGS);
 });
 

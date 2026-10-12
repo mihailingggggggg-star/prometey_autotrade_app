@@ -3,8 +3,10 @@
  *
  * Формы ответов обязаны буквально совпадать с shared/types.ts: этот файл —
  * единственное место, где строки БД превращаются в DTO для клиента.
- * Ошибки — {"error":{"code","message"}} со статусом 4xx/5xx; каждая ошибка
- * пишется в stderr (stdout занят приложением, логов туда не шлём).
+ * Ошибки — {"error":{"code","message"}} со статусом 4xx/5xx. Ожидаемые отказы
+ * (ApiError, 4xx/5xx с понятным code) отдаются клиенту как есть и в лог не
+ * пишутся; непредвиденные (внутренние 500) логируются в stderr только текстом
+ * сообщения, без секретов (stdout занят приложением, логов туда не шлём).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";

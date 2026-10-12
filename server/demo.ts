@@ -77,6 +77,13 @@ function refOf(row: PositionRow): SourceRef {
   return { token_addr: row.token_addr, pair_addr: row.token_addr, symbol: row.symbol, name: row.name };
 }
 
+/** Нарушение UNIQUE-индекса (SQLITE_CONSTRAINT_UNIQUE = 2067). */
+function isUniqueViolation(e: unknown): boolean {
+  const code = (e as { errcode?: number })?.errcode;
+  const msg = e instanceof Error ? e.message : String(e);
+  return code === 2067 || /UNIQUE constraint failed/i.test(msg);
+}
+
 /** Режим ТП хранится в note: "tp_mode=free_ride" | "tp_mode=manual". */
 function tpModeOf(row: PositionRow): "free_ride" | "manual" {
   return row.note.includes("manual") ? "manual" : "free_ride";
@@ -119,6 +126,9 @@ export async function openPosition(req: OpenPositionRequest): Promise<Position> 
 
   // Антидубль: одна незакрытая позиция на монету. Иначе повторная покупка и
   // «Докупить» в интерфейсе создавали бы две позиции вместо одной усреднённой.
+  // Это БЫСТРЫЙ путь (понятный 409 до запроса цены). Гонку двух параллельных
+  // открытий закрывает частичный UNIQUE-индекс idx_positions_token_open — вставка
+  // ниже превращает его нарушение в тот же 409.
   const existing = getDb()
     .prepare("SELECT id FROM positions WHERE token_addr=? AND status!='closed' LIMIT 1")
     .get(sig.token_addr) as { id: number } | undefined;
@@ -157,32 +167,43 @@ export async function openPosition(req: OpenPositionRequest): Promise<Position> 
   const qty = (usd - fee - slip) / entry;
   const tpPrice = entry * (1 + tpPercent / 100);
 
-  const res = getDb()
-    .prepare(
-      `INSERT INTO positions(signal_id, token_addr, symbol, name, entry_price, qty, usd_in, fees_usd,
-        slippage_usd, tp_price, tp_percent, status, free_ride_done, realized_usd, peak_price, opened_ts, note)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    )
-    .run(
-      sig.id,
-      sig.token_addr,
-      sig.symbol,
-      sig.name,
-      entry,
-      qty,
-      usd,
-      fee,
-      slip,
-      tpPrice,
-      tpPercent,
-      "open",
-      0,
-      0,
-      entry,
-      now,
-      `tp_mode=${tpMode}`,
-    );
-  const id = Number(res.lastInsertRowid);
+  let id: number;
+  try {
+    const res = getDb()
+      .prepare(
+        `INSERT INTO positions(signal_id, token_addr, symbol, name, entry_price, qty, usd_in, fees_usd,
+          slippage_usd, tp_price, tp_percent, status, free_ride_done, realized_usd, peak_price, opened_ts, note)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        sig.id,
+        sig.token_addr,
+        sig.symbol,
+        sig.name,
+        entry,
+        qty,
+        usd,
+        fee,
+        slip,
+        tpPrice,
+        tpPercent,
+        "open",
+        0,
+        0,
+        entry,
+        now,
+        `tp_mode=${tpMode}`,
+      );
+    id = Number(res.lastInsertRowid);
+  } catch (e) {
+    // Две параллельные заявки по одной монете прошли пред-проверку до вставки:
+    // побеждает та, что вставила первой, вторая ловит UNIQUE-индекс и получает
+    // тот же 409 position_exists, что и в быстром пути выше.
+    if (isUniqueViolation(e)) {
+      throw new ApiError("position_exists", 409, `по ${sig.symbol} уже есть открытая позиция — используйте «Докупить»`);
+    }
+    throw e;
+  }
   insertFill(id, now, "open", entry, qty, usd, fee, slip);
 
   // Сигнал переходит в «в работе» — лента показывает, что им уже воспользовались.
@@ -307,10 +328,15 @@ function applySell(
 
 /**
  * Очередь обслуживания: updatePositions вызывается и таймером, и на КАЖДОМ
- * чтении /api/positions, а тот опрашивают одновременно два экрана. Два
- * параллельных прогона читали бы строки до `await` маркет-данных и оба увидели
- * бы free_ride_done=0 — отсюда двойная продажа 50%. Сериализуем: следующий
- * прогон стартует только после завершения предыдущего.
+ * чтении /api/positions, а тот опрашивают одновременно два экрана. Сериализуем
+ * прогоны (следующий стартует только после завершения предыдущего), чтобы
+ * наложения вообще не возникало: прогон читает строки ДО `await` маркет-данных,
+ * и без сериализации второй прогон увидел бы устаревший снимок строки.
+ *
+ * От двойной продажи защищает ПРЕЖДЕ ВСЕГО атомарный захват free_ride_done
+ * (UPDATE ... WHERE free_ride_done=0) в runUpdatePositions — он сработал бы и
+ * при наложении. Очередь — дополнительная страховка: при ней параллельные
+ * обращения к API не создают и лишних чтений устаревших строк.
  */
 let updateQueue: Promise<void> = Promise.resolve();
 
@@ -360,14 +386,32 @@ async function runUpdatePositions(now: number): Promise<void> {
             .run(row.id);
           if (Number(claim.changes) === 1) {
             const net = applySell(row, s.free_ride.tp1_fraction, price, "tp_50", now, s);
-            getDb().prepare("UPDATE positions SET status='free_ride' WHERE id=? AND status!='closed'").run(row.id);
-            addAlert(
-              row.id,
-              "free_ride",
-              `Free Riding: зафиксировано ${Math.round(s.free_ride.tp1_fraction * 100)}% объёма на +${s.free_ride.tp1_percent}% ` +
-                `(вернулось ~${net.toFixed(2)} USDT, риск снят)`,
-              "info",
-            );
+            // Страховка для уже сохранённых в базе настроек (валидация запрещает
+            // лишь новые): если доля фиксации = 1, объём продан целиком и остаток
+            // qty≈0. Без этой ветки позиция зависла бы в 'free_ride' с нулевым
+            // остатком: цель 2 требует qty > EPS, история берёт только 'closed'.
+            const after = positionById(row.id) as PositionRow;
+            if (after.qty <= EPS) {
+              getDb()
+                .prepare("UPDATE positions SET qty=0, status='closed', close_reason='tp_full', closed_ts=? WHERE id=?")
+                .run(now, row.id);
+              addAlert(
+                row.id,
+                "free_ride",
+                `Free Riding: зафиксировано 100% объёма ${row.symbol} на +${s.free_ride.tp1_percent}% ` +
+                  `(вернулось ~${net.toFixed(2)} USDT, позиция закрыта)`,
+                "info",
+              );
+            } else {
+              getDb().prepare("UPDATE positions SET status='free_ride' WHERE id=? AND status!='closed'").run(row.id);
+              addAlert(
+                row.id,
+                "free_ride",
+                `Free Riding: зафиксировано ${Math.round(s.free_ride.tp1_fraction * 100)}% объёма на +${s.free_ride.tp1_percent}% ` +
+                  `(вернулось ~${net.toFixed(2)} USDT, риск снят)`,
+                "info",
+              );
+            }
           }
         }
       } else if (row.qty > EPS && row.tp_price > 0 && price >= row.tp_price) {

@@ -38,12 +38,30 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const patch = (p: SettingsPatch) => {
-    setDraft((d) => (d ? {
-      screener: { ...d.screener, ...(p.screener ?? {}) },
-      demo: { ...d.demo, ...(p.demo ?? {}) },
-      free_ride: { ...d.free_ride, ...(p.free_ride ?? {}) },
-    } : d));
-    void updateSettings(p).catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
+    if (!draft) return;
+    const merged: Settings = {
+      screener: { ...draft.screener, ...(p.screener ?? {}) },
+      demo: { ...draft.demo, ...(p.demo ?? {}) },
+      free_ride: { ...draft.free_ride, ...(p.free_ride ?? {}) },
+    };
+    // Цель 2 обязана быть СТРОГО выше триггера фиксации (сервер иначе отклоняет
+    // сохранение). Чтобы ползунок «Триггер» не заходил в мёртвую зону, подтягиваем
+    // цель 2 вверх здесь же — одним запросом, а не оставляем пользователя с отказом.
+    let send: SettingsPatch = p;
+    if (merged.free_ride.tp2_percent <= merged.free_ride.tp1_percent) {
+      merged.free_ride.tp2_percent = Math.min(
+        1000,
+        Math.ceil((merged.free_ride.tp1_percent + 1) / 50) * 50, // следующий шаг ползунка цели 2
+      );
+      send = { ...p, free_ride: { ...(p.free_ride ?? {}), tp2_percent: merged.free_ride.tp2_percent } };
+    }
+    setDraft(merged);
+    // Отказ сервера откатывает черновик к состоянию сервера: клиент не должен
+    // показывать одно, пока сервер хранит другое. Текст ошибки — как есть.
+    void updateSettings(send).catch((e) => {
+      setNotice(e instanceof Error ? e.message : String(e));
+      settings.refresh();
+    });
   };
 
   const saveKeys = async () => {
@@ -220,7 +238,7 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
                 </div>
                 <SliderRow label="Триггер фиксации" value={draft.free_ride.tp1_percent} min={10} max={400} step={10}
                            suffix="%" onCommit={(v) => patch({ free_ride: { tp1_percent: v } })} />
-                <SliderRow label="Доля фиксации" value={draft.free_ride.tp1_fraction} min={0.1} max={1} step={0.05}
+                <SliderRow label="Доля фиксации" value={draft.free_ride.tp1_fraction} min={0.1} max={0.9} step={0.05}
                            fmt={(v) => Math.round(v * 100) + "%"}
                            onCommit={(v) => patch({ free_ride: { tp1_fraction: v } })} />
                 <SliderRow label="Цель 2 (остаток)" value={draft.free_ride.tp2_percent} min={100} max={1000} step={50}

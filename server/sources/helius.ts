@@ -22,7 +22,12 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  if (resp.error) throw new ApiError("rpc_error", 502, `Helius ${method}: ${resp.error.message}`);
+  if (resp.error) {
+    // Сырое сообщение RPC наружу НЕ отдаём: провайдер может отразить в нём
+    // детали запроса (в т.ч. ключ). Клиенту — понятная формулировка, без
+    // содержания ответа. Ключ в query уже вырезается redactUrl в httpJson.
+    throw new ApiError("rpc_error", 502, `Helius: RPC-запрос «${method}» отклонён провайдером`);
+  }
   return resp.result as T;
 }
 

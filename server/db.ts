@@ -157,6 +157,38 @@ function migrate(d: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_seen ON alerts(seen);
   `);
+
+  ensureUniqueOpenIndex(d);
+}
+
+/**
+ * Частичный UNIQUE-индекс: одна НЕзакрытая позиция на монету.
+ *
+ * Делает антидубль входа АТОМАРНЫМ на уровне БД: проверка «нет открытой позиции»
+ * в openPosition — быстрый путь для понятного 409, но между ней и вставкой есть
+ * await маркет-данных, поэтому два параллельных открытия по одной монете могли
+ * оба пройти проверку. Уникальный индекс закрывает эту гонку.
+ *
+ * Старые базы: если в данных уже есть две незакрытые позиции по одной монете
+ * (гонка, допущенная до этой правки), CREATE UNIQUE INDEX упадёт. Мы НЕ трогаем
+ * и не закрываем чужие сделки автоматически — это опаснее дубля. Вместо этого
+ * предупреждаем в stderr и оставляем индекс несозданным: антидубль продолжает
+ * работать проверкой в коде (как раньше), а оператор может разобрать дубли.
+ */
+function ensureUniqueOpenIndex(d: DatabaseSync): void {
+  try {
+    d.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_token_open " +
+        "ON positions(token_addr) WHERE status <> 'closed'",
+    );
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[db] не удалось создать UNIQUE-индекс антидубля (idx_positions_token_open): ${why}. ` +
+        "Проверьте незакрытые позиции на дубликаты по token_addr — индекс не создан, " +
+        "антидубль остаётся только проверкой в коде.",
+    );
+  }
 }
 
 /* ─────────────── настройки ─────────────── */
@@ -241,7 +273,11 @@ const SETTINGS_SPEC: Record<keyof Settings, Record<string, Spec>> = {
   },
   free_ride: {
     tp1_percent: { type: "number", min: 1, max: 10000 },
-    tp1_fraction: { type: "number", min: 0, max: 1 },
+    // Доля фиксации СТРОГО меньше 1: при 1 продавался бы весь объём, позиция
+    // оставалась бы без остатка (зависала в 'free_ride'). Нижняя граница 0.1 —
+    // фиксация меньше десятой доли не имеет смысла. Старые базы со значением 1
+    // валидацию не проходят, но движок всё равно закрывает такую позицию (страховка).
+    tp1_fraction: { type: "number", min: 0.1, max: 0.9 },
     tp2_percent: { type: "number", min: 1, max: 10000 },
   },
 };
