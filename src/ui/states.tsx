@@ -8,8 +8,28 @@
  * причиной, а не пустой экран.
  */
 import type { ReactNode } from "react";
+import { FlaskConical } from "lucide-react";
 import { NO_SERVER } from "../lib/api";
 import { Glass, Press } from "./kit";
+
+/** Плашка «демо-данные» для mock-режима.
+ *
+ *  Придуманные движком числа выглядят ровно как рыночные, и человек принимает
+ *  их за реальность. Плашка заметная (оранжевая, во всю ширину) и стоит там,
+ *  где данные впервые попадаются на глаза — на ленте и в карточке монеты.
+ *  В live её нет вовсе: там данные настоящие. */
+export function DemoBanner({ note }: { note?: string }) {
+  return (
+    <div className="mx-4 mb-3 p-3 rounded-[14px] flex items-center gap-2.5"
+         style={{ background: "color-mix(in srgb, var(--orange) 15%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--orange) 45%, transparent)" }}>
+      <FlaskConical size={18} className="shrink-0" style={{ color: "var(--orange)" }} />
+      <div className="text-[13px] leading-snug">
+        <b>демо-данные</b> — {note ?? "числа придуманы для показа, а не взяты с рынка."}
+      </div>
+    </div>
+  );
+}
 
 export function Loading({ label }: { label: string }) {
   return (

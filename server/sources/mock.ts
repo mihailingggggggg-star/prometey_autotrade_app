@@ -9,9 +9,19 @@
  * /api/candles, и PnL позиций считаются одной функцией mockPrice(addr, t) —
  * иначе линия графика разойдётся с состоянием позиции.
  *
+ * ВАЖНО (честность демо): вся вселенная — ВЫДУМАННЫЕ токены (тикеры/имена ниже
+ * не принадлежат реальным монетам), адреса — псевдо-base58 из сида, а не адреса
+ * существующих токенов. Цена и свечи не «подставляются» под реальные тикеры.
+ *
  * Цена — функция абсолютного «времени мира» t и момента пробуждения мира
  * (epoch): до epoch идёт историческое накопление (узкий боковик), после — у
- * ~30% токенов разгон до x2 за 3–10 дней, остальные падают или ходят боком.
+ * ~30% токенов разгон до ~x2.9 за 3–10 дней, остальные падают или ходят боком.
+ *
+ * Доходности НЕ гладкие: поверх тренда лежит многооктавный фрактальный шум
+ * (12 октав, лакунарность 2.5), который не даёт выраженной периодичности, плюс
+ * редкие узкие «шипы» — отсюда длинные тени на свечах. OHLC получаются
+ * под-выборкой единой функции цены внутри бара, поэтому тени настоящие, а
+ * закрытие последней свечи совпадает с mockPrice.
  */
 import type { Candle, ChartTf, DataMode } from "../../shared/types.ts";
 
@@ -109,36 +119,40 @@ function pseudoAddr(seedStr: string, len = 44): string {
 }
 
 /* ─────────────── вселенная токенов ─────────────── */
-
+/**
+ * ВЫДУМАННЫЕ токены: совпадения с реальными монетами/тикерами случайны и не
+ * предполагались. Реальные символы (BONK, JUP, JITO, PYTH и т.п.) намеренно не
+ * используются — демо не должно выдавать синтетику за настоящий рынок.
+ */
 const UNIVERSE: { symbol: string; name: string }[] = [
-  { symbol: "BONK", name: "Bonk" },
-  { symbol: "JUP", name: "Jupiter" },
-  { symbol: "WIF", name: "dogwifhat" },
-  { symbol: "PYTH", name: "Pyth Network" },
-  { symbol: "JTO", name: "Jito" },
-  { symbol: "RAY", name: "Raydium" },
-  { symbol: "ORCA", name: "Orca" },
-  { symbol: "TNSR", name: "Tensor" },
-  { symbol: "DRIFT", name: "Drift Protocol" },
-  { symbol: "MEW", name: "cat in a dogs world" },
-  { symbol: "POPCAT", name: "Popcat" },
-  { symbol: "BOME", name: "Book of Meme" },
-  { symbol: "GLXY", name: "Galaxy Index" },
-  { symbol: "NEBU", name: "Nebula Compute" },
+  { symbol: "ZEPHYR", name: "Zephyr Pay" },
+  { symbol: "KRYPT", name: "Krypton Labs" },
+  { symbol: "VOLNA", name: "Volna Wave" },
+  { symbol: "ORBITA", name: "Orbita Network" },
+  { symbol: "NIMBUS", name: "Nimbus Compute" },
+  { symbol: "HALCYON", name: "Halcyon Grid" },
   { symbol: "SFRG", name: "Solar Forge" },
   { symbol: "QNTM", name: "Quantum Vault" },
-  { symbol: "HELIOS", name: "Helios Nodes" },
-  { symbol: "VAPR", name: "Vapor DEX" },
+  { symbol: "GLXY", name: "Galaxy Index" },
   { symbol: "MIST", name: "Mistral AI Net" },
   { symbol: "KOBA", name: "Kobalt Finance" },
-  { symbol: "ZEPH", name: "Zephyr Pay" },
   { symbol: "RIFT", name: "Rift Protocol" },
-  { symbol: "AERO", name: "Aerodrome Sol" },
+  { symbol: "VAPR", name: "Vapor DEX" },
+  { symbol: "NEBU", name: "Nebula Compute" },
+  { symbol: "HELIOS", name: "Helios Nodes" },
   { symbol: "LUMEN", name: "Lumen Storage" },
+  { symbol: "ZOLAR", name: "Zolar Energy" },
+  { symbol: "MORIA", name: "Moria Vault" },
+  { symbol: "TUNDRA", name: "Tundra Finance" },
+  { symbol: "QUARK", name: "Quark Layer" },
+  { symbol: "VERDANT", name: "Verdant Growth" },
+  { symbol: "AURUM", name: "Aurum Reserve" },
+  { symbol: "PELAGO", name: "Pelago DEX" },
+  { symbol: "CINERA", name: "Cinera Media" },
 ];
 
 /** Первые CLEAN_COUNT — «чистые» токены: проходят все слои, чтобы скан всегда
- *  что-то находил. Из них ~30% вселенной восходящие (7 из 24). */
+ *  что-то находил. Из них все восходящие (7 из 24). */
 export const CLEAN_COUNT = 7;
 /** Индекс токена, у которого после входа подсасывается ликвидность (для liq-drain).
  *  Выбран из первых MAX_PER_SCAN «чистых», иначе сигнал по нему не попадёт в ленту. */
@@ -152,7 +166,8 @@ interface Profile {
   name: string;
   mode: Mode;
   base: number;
-  vol: number;
+  /** Базовая лог-амплитуда многооктавного шума (доля цены). */
+  noiseAmp: number;
   pumpDays: number;
   /** Через сколько дней после старта мира начинается разгон (для «свежих» сканов). */
   pumpStartDays: number;
@@ -192,6 +207,11 @@ export function refFor(i: number): SourceRef {
   };
 }
 
+/** Список символов вселенной (для тестов честности данных). */
+export function mockSymbols(): string[] {
+  return UNIVERSE.map((t) => t.symbol);
+}
+
 function buildProfile(i: number): Profile {
   const t = UNIVERSE[i];
   const seed = fnv1a(`${t.symbol}#${i}`);
@@ -205,7 +225,8 @@ function buildProfile(i: number): Profile {
     name: t.name,
     mode,
     base: clean ? range(r, 0.0005, 3) : 10 ** range(r, -4, 0.6),
-    vol: range(r, 0.006, 0.03),
+    // Амплитуда шума: у «чистых» спокойнее, у мусорных — шире разброс.
+    noiseAmp: clean ? range(r, 0.05, 0.1) : range(r, 0.06, 0.24),
     pumpDays: range(r, 3, 10),
     // Разгон растянут по времени: первый «чистый» токен стартует сразу, остальные —
     // позже. Так повторные сканы ещё долго находят кого-то в фазе накопления.
@@ -259,7 +280,7 @@ export function mockProfile(addr: string): { mode: Mode; pumpDays: number } {
   return { mode: p.mode, pumpDays: p.pumpDays };
 }
 
-/* ─────────────── цена и свечи ─────────────── */
+/* ─────────────── многооктавный детерминированный шум ─────────────── */
 
 const DAY = 86400;
 
@@ -267,20 +288,101 @@ function smoothstep(x: number): number {
   return x * x * (3 - 2 * x);
 }
 
-/** Гладкий детерминированный шум из суммы синусов — без разрывов между свечами. */
-function smoothNoise(seed: number, t: number): number {
-  const r = mulberry32(seed);
-  let v = 0;
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/** Хэш целочисленного узла решётки → [-1, 1). Детерминирован во всех средах. */
+function lattice(seed: number, i: number): number {
+  let h = (seed ^ Math.imul(i | 0, 0x27d4eb2d)) | 0;
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 2147483648 - 1;
+}
+
+/** Хэш узла решётки → [0, 1). */
+function hash01(seed: number, i: number): number {
+  return (lattice(seed, i) + 1) / 2;
+}
+
+/** Гладкий value-noise (квинтическая интерполяция между узлами решётки). */
+function valueNoise(seed: number, x: number): number {
+  const i = Math.floor(x);
+  const f = x - i;
+  const u = f * f * f * (f * (f * 6 - 15) + 10);
+  const a = lattice(seed, i);
+  const b = lattice(seed, i + 1);
+  return a + (b - a) * u;
+}
+
+const FBM_OCT = 12;
+const FBM_LAC = 2.5;
+const FBM_GAIN = 0.76;
+/** Нормировка суммы октав к единичному масштабу (подобрана замером). */
+const FBM_NORM = 1 / 1.25;
+
+/** Фрактальный шум: 12 октав value-noise — крупнейшая ~сутки, мельчайшая ~4 c.
+ *  Многооктавность даёт негладкие доходности без выраженной периодичности. */
+function fbm(seed: number, t: number): number {
+  let sum = 0;
   let amp = 1;
-  let freq = 1 / (DAY * 1.7);
-  let ph = r() * 6.283185;
-  for (let k = 0; k < 5; k++) {
-    v += amp * Math.sin(2 * Math.PI * freq * t + ph);
-    amp *= 0.55;
-    freq *= 2.3;
-    ph += r() * 6.283185;
+  let freq = 1 / DAY;
+  for (let k = 0; k < FBM_OCT; k++) {
+    sum += amp * valueNoise((seed + Math.imul(k + 1, 0x9e3779b1)) | 0, t * freq);
+    amp *= FBM_GAIN;
+    freq *= FBM_LAC;
+  }
+  return sum * FBM_NORM;
+}
+
+const SPIKE_CELL = 900;
+
+/** Редкие узкие «шипы»: ~1 на 1–2 часа, ширина 1–4 минуты — длинные тени свечей. */
+function spikes(seed: number, t: number): number {
+  let v = 0;
+  const c = Math.floor(t / SPIKE_CELL);
+  for (let k = c - 1; k <= c + 1; k++) {
+    if (hash01((seed ^ 0x51a7c0de) | 0, k) < 0.8) continue; // ~20% ячеек дают шип
+    const center = (k + 0.15 + 0.7 * hash01((seed ^ 0x2f0e1c4a) | 0, k)) * SPIKE_CELL;
+    const width = 45 + 260 * hash01((seed ^ 0x7be3a911) | 0, k);
+    const dir = hash01((seed ^ 0x1b873593) | 0, k) < 0.5 ? -1 : 1;
+    const amp = dir * (0.006 + 0.022 * hash01((seed ^ 0x6d2b79f5) | 0, k));
+    const d = (t - center) / width;
+    if (Math.abs(d) < 3.5) v += amp * Math.exp(-d * d);
   }
   return v;
+}
+
+/* ─────────────── цена ─────────────── */
+
+/** Амплитуда шума по фазам: накопление — спокойно, импульс — волатильно, падение затухает. */
+function noiseAmp(p: Profile, t: number, epoch: number): number {
+  if (t < epoch) return p.noiseAmp * 0.55;
+  const since = (t - epoch) / DAY;
+  if (p.mode === "rising") {
+    const x = (since - p.pumpStartDays) / p.pumpDays;
+    if (x <= 0) return p.noiseAmp * 0.55;
+    if (x <= 1) return p.noiseAmp * (0.55 + 0.5 * Math.sin(Math.PI * x));
+    return p.noiseAmp * (0.55 + 0.3 * Math.exp(-(x - 1)));
+  }
+  if (p.mode === "falling") return p.noiseAmp * (0.9 * Math.exp(-0.12 * since) + 0.45);
+  return p.noiseAmp * 0.6;
+}
+
+const PUMP_GAIN = 1.9;
+
+/** Множитель тренда относительно базы. До epoch тренд плоский (накопление). */
+function trendMult(p: Profile, t: number, epoch: number): number {
+  if (t < epoch) return 1;
+  const since = (t - epoch) / DAY;
+  if (p.mode === "rising") {
+    const x = clamp01((since - p.pumpStartDays) / p.pumpDays);
+    return 1 + PUMP_GAIN * smoothstep(x);
+  }
+  if (p.mode === "falling") return Math.exp(-p.decayPerDay * since);
+  // Боковик — медленная апериодичная волна, а не синус: без явной периодичности.
+  return 1 + 0.07 * valueNoise((p.seed ^ 0x2545f491) | 0, t / (p.cycleDays * DAY) + p.phase);
 }
 
 function roundPrice(v: number): number {
@@ -288,30 +390,24 @@ function roundPrice(v: number): number {
   return Number(v.toPrecision(6));
 }
 
+/** Внутренняя цена без округления: ядро mockPrice (mockPrice = roundPrice(rawPrice)).
+ *  И свечи, и текущая цена, и PnL берутся из этого ОДНОГО генератора; отдельная
+ *  функция нужна лишь чтобы округление не съедало тени свечей. */
+function rawPrice(addr: string, t: number, epoch: number): number {
+  const p = profileFor(addr);
+  const logNoise = noiseAmp(p, t, epoch) * fbm(p.seed, t) + spikes(p.seed, t);
+  return p.base * trendMult(p, t, epoch) * Math.exp(logNoise);
+}
+
 /** ЕДИНЫЙ генератор цены: и текущая цена, и свечи, и PnL — отсюда. */
 export function mockPrice(addr: string, t: number, epoch: number): number {
-  const p = profileFor(addr);
-  let mult: number;
-  if (t < epoch) {
-    // История до пробуждения мира — накопление: узкий боковик вокруг базы.
-    mult = 1 + 0.04 * Math.sin(t / (5 * DAY) + p.phase) + 0.01 * smoothNoise(p.seed, t);
-  } else {
-    const since = (t - epoch) / DAY;
-    if (p.mode === "rising") {
-      // Разгон 1x → ~2.2x (с запасом над x2: шум не должен помешать Free Riding).
-      const x = (since - p.pumpStartDays) / p.pumpDays;
-      mult = 1 + 1.2 * smoothstep(Math.min(1, Math.max(0, x)));
-    } else if (p.mode === "falling") {
-      mult = Math.exp(-p.decayPerDay * since);
-    } else {
-      mult = 1 + 0.07 * Math.sin((since * 2 * Math.PI) / p.cycleDays + p.phase);
-    }
-    mult *= 1 + 0.012 * smoothNoise(p.seed, t);
-  }
-  return roundPrice(Math.max(p.base * mult, p.base * 1e-4));
+  return roundPrice(rawPrice(addr, t, epoch));
 }
 
 const TF_SECONDS: Record<ChartTf, number> = { "1m": 60, "5m": 300, "1h": 3600, "1d": 86400 };
+
+/** Под-выборок внутри бара — из них берём максимум/минимум (настоящие тени). */
+const CANDLE_SUBSAMPLES = 32;
 
 export function mockCandles(addr: string, tf: ChartTf, limit: number, now: number, epoch: number): Candle[] {
   const p = profileFor(addr);
@@ -320,14 +416,25 @@ export function mockCandles(addr: string, tf: ChartTf, limit: number, now: numbe
   const out: Candle[] = [];
   for (let i = limit - 1; i >= 0; i--) {
     const ts = lastOpen - i * iv;
-    const o = mockPrice(addr, ts, epoch);
-    const c = mockPrice(addr, Math.min(ts + iv, now), epoch); // не заглядываем в будущее
-    const wig = 0.0015 + p.vol * 0.4;
-    const h = Math.max(o, c) * (1 + wig);
-    const l = Math.min(o, c) * (1 - wig);
-    const r = mulberry32(p.seed ^ (ts & 0xffffffff));
-    const v = roundPrice(p.liqBase * (0.01 + 0.03 * r()));
-    out.push([ts, o, h, l, c, v]);
+    const end = Math.min(ts + iv, now); // не заглядываем в будущее
+    const oRaw = rawPrice(addr, ts, epoch);
+    const cRaw = rawPrice(addr, end, epoch);
+    let hi = Math.max(oRaw, cRaw);
+    let lo = Math.min(oRaw, cRaw);
+    // Внутри бара идём по той же функции цены: экстремумы дают хай/лоу (тени).
+    for (let j = 1; j <= CANDLE_SUBSAMPLES; j++) {
+      const tt = ts + (iv * j) / (CANDLE_SUBSAMPLES + 1);
+      if (tt > now) break;
+      const s = rawPrice(addr, tt, epoch);
+      if (s > hi) hi = s;
+      if (s < lo) lo = s;
+    }
+    // Объём связан с движением бара: всплески на импульсах, спад в боковике,
+    // плюс детерминированный разброс — объём не константа.
+    const move = Math.abs(cRaw - oRaw) / oRaw;
+    const jitter = 0.6 + 0.9 * hash01((p.seed ^ 0x7f4a7c15) | 0, ts);
+    const vol = roundPrice(p.liqBase * (0.003 + 22 * move) * jitter);
+    out.push([ts, roundPrice(oRaw), roundPrice(hi), roundPrice(lo), roundPrice(cRaw), vol]);
   }
   return out;
 }
@@ -378,7 +485,7 @@ function overviewText(p: Profile, m: MarketData): string {
   const liq = Math.round(m.liq_usd).toLocaleString("ru-RU");
   const nar = p.mode === "rising" ? "инфраструктура и DeFi" : "мем-сектор и розничные потоки";
   return (
-    `${p.name} (${p.symbol}) — токен экосистемы Solana. Пул живёт около ${Math.round(m.age_days)} дн. ` +
+    `${p.name} (${p.symbol}) — выдуманный токен демо-контура (не реальный проект). Пул живёт около ${Math.round(m.age_days)} дн. ` +
     `при ликвидности ${liq} USDT; за последние две недели цена держится в коридоре шириной ~${corridor}%, ` +
     `что похоже на фазу накопления. Прирост уникальных холдеров — около ${p.holdersGrowth.toFixed(1)}% за неделю, ` +
     `число уникальных мейкеров за сутки — ${p.makers}. Основной нарратив — ${nar}. ` +
@@ -389,7 +496,7 @@ function overviewText(p: Profile, m: MarketData): string {
 function socialSummary(p: Profile, m: MarketData): string {
   const tone = p.sentiment >= 6 ? "скорее позитивный" : "смешанный";
   return (
-    `Обсуждения в соцсетях ${tone} (${p.sentiment.toFixed(1)}/10): проект ${p.symbol} чаще связывают с темой ` +
+    `Обсуждения в соцсетях ${tone} (${p.sentiment.toFixed(1)}/10): выдуманный проект ${p.symbol} чаще связывают с темой ` +
     `«${p.mode === "rising" ? "накопление перед импульсом" : "отскок после коррекции"}». ` +
     `Признаков скоординированной накрутки не видно, доля топ-10 холдеров — ${p.top10.toFixed(1)}%. ` +
     `Он-чейн объём за сутки — ${Math.round(m.onchain_volume_usd).toLocaleString("ru-RU")} USDT.`

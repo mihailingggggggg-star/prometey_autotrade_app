@@ -83,10 +83,10 @@ test("движок: liquidity drain даёт critical-алерт при прос
   resetWorld();
   setSettings({ ...DEFAULT_SETTINGS, demo: { ...DEFAULT_SETTINGS.demo, tick_minutes: 720 } });
   const scan = await runScan();
-  // Токен с утечкой ликвидности — JTO (DRAIN_INDEX): ищем его сигнал.
+  // Токен с утечкой ликвидности — NIMBUS (DRAIN_INDEX): ищем его сигнал.
   const db = getDb();
   const drainSignal = db
-    .prepare("SELECT id, token_addr FROM signals WHERE symbol='JTO' ORDER BY id DESC LIMIT 1")
+    .prepare("SELECT id, token_addr FROM signals WHERE symbol='NIMBUS' ORDER BY id DESC LIMIT 1")
     .get() as { id: number } | undefined;
   const signalId = drainSignal ? drainSignal.id : scan.ids[0];
   const pos = await openPosition({ signal_id: signalId, usd: 50, order_type: "market" });

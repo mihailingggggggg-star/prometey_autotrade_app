@@ -18,13 +18,19 @@
  *  • Ручку возвращаем на МЕСТО ЛИНИИ при каждом изменении масштаба (подписка на
  *    visible logical range + ResizeObserver): иначе после протяжки она осталась
  *    бы висеть там, где была, и указывала бы не на ту цену.
+ *
+ *  • Под свечами — ГИСТОГРАММА ОБЪЁМА на отдельной шкале, прижатая к низу:
+ *    объём должен читаться вместе со свечой, а не отбирать у неё высоту.
+ *
+ *  • Режим `full` — тот же график на весь экран: тянется по высоте родителя и
+ *    возвращает вертикальный жест и колесо, которых у встроенного нет.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  CandlestickSeries, LineStyle, createChart,
+  CandlestickSeries, HistogramSeries, LineStyle, createChart,
   type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
-import { GripHorizontal } from "lucide-react";
+import { GripHorizontal, Maximize2 } from "lucide-react";
 import { candles as fetchCandles } from "../lib/api";
 import type { Candle, ChartTf, Position } from "../../shared/types";
 import { cssVar } from "../ui/kit";
@@ -49,6 +55,7 @@ function decimalsOf(v: number): number {
 
 export function PriceChart({
   token, symbol, position, height = 268, onTpChange, tp2Percent = 400,
+  full = false, onExpand,
 }: {
   token: string;
   symbol?: string;
@@ -59,6 +66,11 @@ export function PriceChart({
   /** Цель 2 (остаток), рост от входа в процентах. Приходит из настроек:
    *  быстрое действие обязано ставить ту же цель, что ждёт движок. */
   tp2Percent?: number;
+  /** Полноэкранный режим: график тянется по высоте родителя, а навигация
+   *  включает вертикальный жест и колесо — прокручивать за ним нечего. */
+  full?: boolean;
+  /** Показать кнопку «развернуть» (встроенный режим карточки монеты). */
+  onExpand?: () => void;
 }) {
   const [tf, setTf] = useState<ChartTf>("1h");
   const [data, setData] = useState<Candle[] | null>(null);
@@ -69,6 +81,7 @@ export function PriceChart({
   const legend = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volume = useRef<ISeriesApi<"Histogram"> | null>(null);
   const entryLine = useRef<IPriceLine | null>(null);
   const tpLine = useRef<IPriceLine | null>(null);
   const [ready, setReady] = useState(false);
@@ -123,22 +136,36 @@ export function PriceChart({
         horzLine: { labelBackgroundColor: cssVar("--tint", "#f0293f") },
         vertLine: { labelBackgroundColor: cssVar("--tint", "#f0293f") },
       },
-      /* Вертикальное перетаскивание и колесо отняты: график живёт внутри
-         прокручиваемого экрана, и жест вверх обязан прокручивать страницу, а
-         не двигать цену. */
-      handleScroll: { horzTouchDrag: true, vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true },
-      handleScale: {
-        pinch: true, mouseWheel: false,
-        axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: true,
-      },
+      /* Вертикальное перетаскивание и колесо отняты во встроенном режиме:
+         график живёт внутри прокручиваемого экрана, и жест вверх обязан
+         прокручивать страницу, а не двигать цену. На весь экран прокручивать
+         нечего — навигация включена целиком, как в терминале. */
+      handleScroll: full
+        ? { horzTouchDrag: true, vertTouchDrag: true, mouseWheel: true, pressedMouseMove: true }
+        : { horzTouchDrag: true, vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true },
+      handleScale: full
+        ? { pinch: true, mouseWheel: true,
+            axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: true }
+        : { pinch: true, mouseWheel: false,
+            axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: true },
       kineticScroll: { touch: true, mouse: false },
     });
     const s = c.addSeries(CandlestickSeries, {
       upColor: up, downColor: down, borderVisible: false,
       wickUpColor: up, wickDownColor: down, priceLineVisible: false,
     });
+    /* Объём — гистограмма НА ПАНЕЛИ ЦЕНЫ, но на своей шкале (priceScaleId) и
+       прижата к низу: он читается вместе со свечой, а не отбирает у неё высоту
+       отдельной панелью. Серый — цвет тут ничего не кодирует, зелёно-красный
+       спорил бы со свечами. */
+    const vol = c.addSeries(HistogramSeries, {
+      color: "rgba(160,160,170,.42)", priceFormat: { type: "volume" },
+      priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false,
+    });
+    c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     chart.current = c;
     series.current = s;
+    volume.current = vol;
     setReady(true);
 
     c.subscribeCrosshairMove((param) => {
@@ -166,10 +193,11 @@ export function PriceChart({
       try { c.applyOptions({ autoSize: false }); } catch { /* уже снесён */ }
       try { c.remove(); } catch { /* уже снесён */ }
       chart.current = null; series.current = null;
+      volume.current = null;
       entryLine.current = null; tpLine.current = null;
       setReady(false);
     };
-  }, [token, tf, bump]);
+  }, [token, tf, full, bump]);
 
   /* ── данные ── */
   useEffect(() => {
@@ -180,6 +208,10 @@ export function PriceChart({
     s.applyOptions({ priceFormat: { type: "price", precision: dec, minMove: 10 ** -dec } });
     s.setData(data.map((d) => ({
       time: d[0] as UTCTimestamp, open: d[1], high: d[2], low: d[3], close: d[4],
+    })));
+    // Объём: шестое поле свечи [ts, o, h, l, c, volume].
+    volume.current?.setData(data.map((d) => ({
+      time: d[0] as UTCTimestamp, value: d[5],
     })));
     // Последние ~90 свечей: на двух сотнях тело становится волоском.
     if (data.length > 90) {
@@ -301,9 +333,9 @@ export function PriceChart({
   const up = (position?.pnl_pct ?? 0) >= 0;
 
   return (
-    <div className="select-none">
+    <div className={full ? "select-none h-full flex flex-col" : "select-none"}>
       {/* Тулбар: таймфреймы + быстрый ТП */}
-      <div className="flex items-center gap-2 px-5 pb-2">
+      <div className="flex items-center gap-2 px-5 pb-2 shrink-0">
         <div className="glass glass-flat p-[3px] flex gap-[3px] rounded-[11px]">
           {TFS.map((t) => (
             <button key={t.id} onClick={() => setTf(t.id)}
@@ -326,10 +358,17 @@ export function PriceChart({
             Цель 2 · x{(1 + tp2Percent / 100).toFixed(1)}
           </button>
         )}
+        {onExpand && (
+          <button onClick={onExpand} aria-label="Развернуть график на весь экран"
+                  className="flex items-center justify-center w-7 h-7 rounded-[9px] shrink-0"
+                  style={{ background: "var(--bg-elev)", color: "var(--label-2)" }}>
+            <Maximize2 size={15} />
+          </button>
+        )}
       </div>
 
-      <div className="relative mx-3 rounded-[16px] overflow-hidden glass glass-flat"
-           style={{ height }}>
+      <div className={`relative rounded-[16px] overflow-hidden glass glass-flat ${full ? "flex-1 min-h-0 mx-2" : "mx-3"}`}
+           style={full ? undefined : { height }}>
         <div ref={legend}
              className="absolute left-3 top-2 z-20 text-[11px] tabular-nums pointer-events-none"
              style={{ color: "var(--label-2)" }} />

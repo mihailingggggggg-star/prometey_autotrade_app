@@ -143,7 +143,17 @@ export function Positions({ refreshKey, onOpen }: {
               )}
             </Press>
 
+            {/* График — отдельным действием, а не через тап по карточке: за ним
+                идут, чтобы вести цель, и открывать его надо сразу, без лишнего
+                экрана посередине. */}
             <div className="flex gap-2 mt-3">
+              <Press onClick={() => onOpen({
+                signalId: p.signal_id, tokenAddr: p.token_addr, symbol: p.symbol, name: p.name, chart: true,
+              })} className="flex-1">
+                <div className="py-2.5 rounded-[12px] text-center text-[14px] font-semibold glass glass-flat">
+                  График
+                </div>
+              </Press>
               <Press onClick={() => close(p, 0.5)} disabled={busy === p.id} className="flex-1">
                 <div className="py-2.5 rounded-[12px] text-center text-[14px] font-semibold"
                      style={{ background: "var(--bg-elev)" }}>Закрыть 50%</div>
@@ -151,7 +161,7 @@ export function Positions({ refreshKey, onOpen }: {
               <Press onClick={() => close(p, 1)} disabled={busy === p.id} className="flex-1">
                 <div className="py-2.5 rounded-[12px] text-center text-[14px] font-semibold"
                      style={{ background: "color-mix(in srgb, var(--red) 16%, transparent)", color: "var(--red)" }}>
-                  Закрыть всё
+                  Всё
                 </div>
               </Press>
             </div>

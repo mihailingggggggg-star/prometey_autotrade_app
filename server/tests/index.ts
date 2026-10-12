@@ -14,6 +14,7 @@ import "./engine.test.ts";
 import "./keys.test.ts";
 import "./routes.test.ts";
 import "./regression.test.ts";
+import "./data_quality.test.ts";
 import "./hardening.test.ts";
 import "./strategy.test.ts";
 import "./static.test.ts";

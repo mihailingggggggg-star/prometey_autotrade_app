@@ -39,8 +39,8 @@ test("мир движется: растущий токен проходит ≥1
   assert.equal(DEFAULT_SETTINGS.demo.tick_minutes, 360, "дефолт tick_minutes должен быть 360");
 
   const epoch = worldStart();
-  const ref = tokenRefBySymbol("BONK");
-  assert.ok(ref, "BONK должен быть в mock-вселенной");
+  const ref = tokenRefBySymbol("ZEPHYR");
+  assert.ok(ref, "ZEPHYR должен быть в mock-вселенной");
   const prof = mockProfile(ref.token_addr);
   assert.equal(prof.mode, "rising", "тестовый токен должен быть растущим");
 

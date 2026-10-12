@@ -89,8 +89,15 @@ export function GroupLabel({ children }: { children: ReactNode }) {
 
 /** Сегментный контрол iOS: подложка едет за выбором через layoutId. */
 export function Segmented<T extends string>({
-  value, onChange, options, size = "md",
-}: { value: T; onChange: (v: T) => void; options: { id: T; label: string }[]; size?: "sm" | "md" }) {
+  value, onChange, options, size = "md", layoutId = "seg",
+}: {
+  value: T; onChange: (v: T) => void; options: { id: T; label: string }[];
+  size?: "sm" | "md";
+  /** Идентификатор подложки-бегунка. Разный у двух ОДНОВРЕМЕННО видимых
+   *  контролов (главная под наложением карточки монеты): общий id заставил бы
+   *  motion считать их одним элементом и переносить бегунок между экранами. */
+  layoutId?: string;
+}) {
   return (
     <div className="glass glass-flat p-[3px] flex gap-[3px] rounded-[11px]">
       {options.map((o) => (
@@ -98,7 +105,7 @@ export function Segmented<T extends string>({
           className={`relative flex-1 rounded-[9px] ${size === "sm" ? "py-1 text-[13px]" : "py-1.5 text-[14px]"} font-medium`}
           style={{ color: value === o.id ? "var(--label)" : "var(--label-2)" }}>
           {value === o.id && (
-            <motion.span layoutId="seg" transition={SPRING}
+            <motion.span layoutId={layoutId} transition={SPRING}
               className="absolute inset-0 rounded-[9px]"
               style={{ background: "var(--bg-elev)", boxShadow: "0 1px 3px rgba(0,0,0,.14)" }} />
           )}

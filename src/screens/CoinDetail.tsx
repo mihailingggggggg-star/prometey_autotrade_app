@@ -10,6 +10,7 @@
  * источник правды. Отказ показывается текстом с причиной.
  */
 import { useMemo, useState } from "react";
+import { AnimatePresence } from "motion/react";
 import {
   ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, ExternalLink,
   MessageCircle, ShieldCheck, ShieldAlert, XCircle,
@@ -18,29 +19,37 @@ import {
   getSignal, listPositions, openPosition, addToPosition, closePosition, setTp as apiSetTp, getSettings,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
-import type { Check, Indicators, Position, SignalDetail } from "../../shared/types";
+import type { Check, DataMode, Indicators, Position, SignalDetail } from "../../shared/types";
 import { Glass, Press, Segmented, Modal } from "../ui/kit";
 import { PriceChart } from "../ui/PriceChart";
 import { TokenLogo } from "../ui/TokenLogo";
-import { ErrorBox, KV, Loading, Panel } from "../ui/states";
+import { ErrorBox, KV, Loading, Panel, DemoBanner } from "../ui/states";
 import { dt, money, pct, price as fmtPrice } from "../lib/format";
+import { ChartScreen } from "./ChartScreen";
 
 /** Что за монета открыта. `signalId` может отсутствовать: позицию открывали
- *  без сигнала, и тогда чек-лист/описание недоступны — это не ошибка. */
+ *  без сигнала, и тогда чек-лист/описание недоступны — это не ошибка.
+ *  `chart` — открыть сразу на графике (так карточка позиции ведёт в график). */
 export interface CoinRef {
   signalId: number | null;
   tokenAddr: string;
   symbol: string;
   name: string;
+  chart?: boolean;
 }
 
 const AMOUNTS = [10, 25, 50, 100];
 
-export function CoinDetail({ coin, onBack, onChanged }: {
+export function CoinDetail({ coin, onBack, onChanged, mode }: {
   coin: CoinRef;
   onBack: () => void;
   onChanged: () => void;
+  /** Режим данных: в mock над карточкой стоит плашка «демо-данные». */
+  mode?: DataMode | null;
 }) {
+  // Полноэкранный график: по умолчанию открыт, если карточку позвали из
+  // позиции (там человек шёл именно за графиком).
+  const [chartOpen, setChartOpen] = useState(Boolean(coin.chart));
   const sig = useApi<SignalDetail | null>(
     () => (coin.signalId != null ? getSignal(coin.signalId) : Promise.resolve(null)),
     15000,
@@ -144,8 +153,11 @@ export function CoinDetail({ coin, onBack, onChanged }: {
         </div>
       </div>
 
+      {/* mock — придуманные числа нельзя принять за рынок. В live плашки нет. */}
+      {mode === "mock" && <div className="pt-3"><DemoBanner /></div>}
+
       <div className="scroll flex-1 min-h-0" style={{ overscrollBehavior: "contain" }}>
-        {/* ГРАФИК */}
+        {/* ГРАФИК (встроенный) — тап по значку разворачивает его на весь экран. */}
         <div className="pt-3">
           <PriceChart
             token={coin.tokenAddr}
@@ -153,6 +165,7 @@ export function CoinDetail({ coin, onBack, onChanged }: {
             position={pos}
             tp2Percent={settings.data?.free_ride.tp2_percent}
             onTpChange={pos ? saveTp : undefined}
+            onExpand={() => setChartOpen(true)}
           />
         </div>
 
@@ -282,6 +295,24 @@ export function CoinDetail({ coin, onBack, onChanged }: {
 
         <div style={{ height: "calc(var(--safe-b) + 24px)" }} />
       </div>
+
+      {/* ПОЛНОЭКРАННЫЙ ГРАФИК — поверх карточки, но под её шапкой не прячется:
+          отдельное наложение своего уровня. */}
+      <AnimatePresence>
+        {chartOpen && (
+          <ChartScreen
+            key="chart"
+            token={coin.tokenAddr}
+            symbol={coin.symbol}
+            name={coin.name}
+            position={pos}
+            tp2Percent={settings.data?.free_ride.tp2_percent}
+            onTpChange={pos ? saveTp : undefined}
+            onBack={() => setChartOpen(false)}
+            mode={mode}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
