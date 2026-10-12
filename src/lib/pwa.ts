@@ -36,7 +36,8 @@ export function personalizeManifest(startUrl: string = location.href) {
     start_url: startUrl,
     scope: BASE,
     display: "standalone",
-    orientation: "portrait",
+    // orientation не задаём: ярлык обязан открываться и в альбомной ориентации
+    orientation: "any",
     background_color: "#000000",
     theme_color: "#000000",
     icons: [

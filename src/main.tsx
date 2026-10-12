@@ -13,13 +13,16 @@ import { App } from "./App";
  */
 
 /**
- * Рамка телефона на широком экране (см. `html.desk` в theme.css). Внутри
- * реального телефона её нет никогда: там окно и так шириной с устройство, а
- * рамка съела бы полезную высоту. Порог 520px — по нему же проходит граница
- * «это уже не телефон».
+ * Рамка телефона на широком экране (см. `html.desk` в theme.css).
+ *
+ * Признак не только ширина: `pointer: coarse` означает палец. Телефон в
+ * альбомной ориентации шире 520px, и по одной ширине он попадал в «настольную»
+ * рамку — рамка отнимала полезную высоту у настоящего устройства и выглядела
+ * как чужой интерфейс. Рамка нужна ровно на настольном экране с мышью.
  */
 function frame() {
-  document.documentElement.classList.toggle("desk", window.innerWidth >= 520);
+  const finger = window.matchMedia("(pointer: coarse)").matches;
+  document.documentElement.classList.toggle("desk", window.innerWidth >= 520 && !finger);
 }
 frame();
 window.addEventListener("resize", frame);
