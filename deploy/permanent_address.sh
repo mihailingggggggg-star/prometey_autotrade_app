@@ -129,19 +129,36 @@ systemctl enable caddy >/dev/null 2>&1 || true
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
 # ── 6. Ждём сертификат ───────────────────────────────────────────────────
+# Проверяем КОД ОТВЕТА, а не только «curl не упал»: при включённом пароле Caddy
+# отвечает 401, и проверка на успех через `curl -f` считала бы выдачу сертификата
+# провалом (так и случилось на первом запуске — сертификат был выдан, а скрипт
+# сообщил о неудаче). Поэтому запрос идёт с учётными данными, а 401 трактуется
+# отдельно и честно.
+PROBE_ARGS=(--max-time 5 -o /tmp/caddy_probe.json -w '%{http_code}')
+if [[ "$AUTH" == "on" ]]; then
+  PROBE_ARGS+=(-u "${BASIC_USER}:${NEWPASS}")
+fi
+
 log "── ждём сертификат Let's Encrypt (до 90 с)"
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 "https://$HOST/api/health" >/dev/null 2>&1; then
+  CODE="$(curl -s "${PROBE_ARGS[@]}" "https://$HOST/api/health" 2>/dev/null || true)"
+  if [[ "$CODE" == "200" ]]; then
     log ""
     log "✅ ГОТОВО. Постоянный адрес: https://$HOST"
     if [[ "$AUTH" == "on" ]]; then
       log "   Вход: пользователь «$BASIC_USER», пароль — в $PASS_FILE"
-      log "   (пароль сохранён, чтобы вы могли его посмотреть: sudo cat $PASS_FILE)"
+      log "   Посмотреть пароль: sudo cat $PASS_FILE"
+      log "   Браузер спросит его один раз, дальше запомнит."
     else
       log "   ⚠️ авторизация ВЫКЛЮЧЕНА: приложение открыто всем, кто знает адрес"
     fi
     log "   Запасной путь: quick tunnel на 8790 остаётся рабочим."
     exit 0
+  fi
+  if [[ "$CODE" == "401" ]]; then
+    log "⚠️ сертификат выдан и адрес отвечает, но приложение отдаёт 401: пароль из $PASS_FILE не подошёл."
+    log "   Пароль можно переписать: sudo rm $PASS_FILE && sudo -E bash $0"
+    exit 1
   fi
   sleep 3
 done
