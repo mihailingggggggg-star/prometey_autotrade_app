@@ -36,6 +36,8 @@ export const ENV_DEFAULTS: Record<string, string> = {
   DATA_MODE: "mock",
   API_HOST: "127.0.0.1",
   API_PORT: "8790",
+  // Как часто скринер ищет сигналы сам, минуты (0 — только по кнопке).
+  SCAN_EVERY_MIN: "20",
   DB_PATH: "./data/demo.db",
   TELEGRAM_BOT_TOKEN: "",
   TELEGRAM_CHAT_ID: "",

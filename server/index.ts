@@ -650,6 +650,20 @@ function start(): void {
     advance().catch((e) => console.error(`[server] цикл обслуживания: ${e instanceof Error ? e.message : e}`));
   }, 60_000).unref?.();
 
+  // Периодический скан: скринер обязан искать сам, а не ждать, пока человек
+  // откроет приложение и нажмёт кнопку — иначе за сутки не наберётся ни одной
+  // находки, и будет казаться, что воронка не работает. Интервал из
+  // SCAN_EVERY_MIN (минуты), 0 — выключить. Один скан одновременно гарантирует
+  // runScan, поэтому наложение с кнопкой в приложении безопасно.
+  const scanEveryMin = getEnvNum("SCAN_EVERY_MIN") ?? 20;
+  if (scanEveryMin > 0) {
+    setInterval(() => {
+      runScan()
+        .then((r) => console.error(`[server] плановый скан: найдено ${r.found}, отбраковка ${JSON.stringify(r.rejected_by_layer)}`))
+        .catch((e) => console.error(`[server] плановый скан: ${e instanceof Error ? e.message : e}`));
+    }, scanEveryMin * 60_000).unref?.();
+  }
+
   server.listen(port, host, () => {
     const what = staticCtx ? "API и интерфейс" : "только API";
     console.error(`[server] демо-контур слушает http://${host}:${port} (${what}, режим ${readDataMode()})`);

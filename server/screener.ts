@@ -426,8 +426,27 @@ function firstFailLayer(checks: Check[]): number | null {
   return null;
 }
 
-/** Полный скан: оценивает всю вселенную, но добавляет не больше MAX_PER_SCAN сигналов. */
+let scanInFlight: Promise<ScanResult> | null = null;
+
+/**
+ * Полный скан: оценивает всю вселенную, но добавляет не больше MAX_PER_SCAN сигналов.
+ *
+ * Один скан одновременно. Скан длится до восьми минут, и его одновременно
+ * могут запустить кнопка в приложении и служебный цикл — два параллельных
+ * прохода удвоили бы запросы к GeckoTerminal и Apify, то есть выжгли бы чужие
+ * лимиты и кредит. Второй вызов просто дожидается первого и получает его итог.
+ */
 export async function runScan(): Promise<ScanResult> {
+  if (scanInFlight) return scanInFlight;
+  scanInFlight = runScanOnce();
+  try {
+    return await scanInFlight;
+  } finally {
+    scanInFlight = null;
+  }
+}
+
+async function runScanOnce(): Promise<ScanResult> {
   const s = getSettings();
   const src = getSource();
   // live: окно коридора накопления берём из настроек (range_days).
