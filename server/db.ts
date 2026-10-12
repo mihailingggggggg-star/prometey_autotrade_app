@@ -152,6 +152,38 @@ function migrate(d: DatabaseSync): void {
       value TEXT NOT NULL
     );
 
+    -- Медиаслой (Apify): нормализованные упоминания токена в X и статус сбора.
+    -- Дедуп по (mint, url/идентификатор) — уникальный индекс; повторный сбор той
+    -- же публикации не создаёт дубль (INSERT OR IGNORE).
+    CREATE TABLE IF NOT EXISTS mentions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mint TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      author TEXT NOT NULL,
+      text TEXT NOT NULL,
+      url TEXT NOT NULL,
+      likes INTEGER NOT NULL DEFAULT 0,
+      retweets INTEGER NOT NULL DEFAULT 0,
+      replies INTEGER NOT NULL DEFAULT 0,
+      lang TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_dedup ON mentions(mint, url);
+    CREATE INDEX IF NOT EXISTS idx_mentions_mint_ts ON mentions(mint, ts);
+
+    -- Статус сбора по монете и источнику: когда обновляли и чем закончилось.
+    -- items = -1 — сбор НЕ удался (нет ключа/ошибка/бюджет): такие данные «не
+    -- свежие как результат», и слой 5 обязан видеть их как «нет данных».
+    CREATE TABLE IF NOT EXISTS media_status (
+      mint TEXT NOT NULL,
+      source TEXT NOT NULL,
+      updated_ts INTEGER NOT NULL,
+      items INTEGER NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (mint, source)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts);
     CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
     CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id);
@@ -207,9 +239,18 @@ export const DEFAULT_SETTINGS: Settings = {
     wash_filter: true,
     llm_filter: true,
     range_days: 14,
-    range_pct: 18,
-    drawdown_min: 70,
-    drawdown_max: 90,
+    // Слой 4, коридор накопления: полная ширина коридора (max-min)/mid ≤ 2*range_pct.
+    // РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: 18 → 20 (ширина ≤40% вместо ≤36%). Боковик
+    // остаётся «сухим», но исчезает вклад отсечки ровно в 2 п.п., из-за которой
+    // срезались кандидаты с уже узким, но чуть шире прежнего порога коридором.
+    range_pct: 20,
+    // Слой 4, просадка от максимума. РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: 70–90 → 50–95.
+    // Причина: наша история ограничена окном (~180 дней), поэтому просадка измеряется
+    // от максимума ДОСТУПНОГО окна и систематически занижена — требование ≥70% отсекло
+    // ВСЕХ кандидатов (ближайший — 67.1%). Порог ≥50% сохраняет смысл стратегии
+    // («глубокая коррекция»), верхняя граница 95% отсекает уже мёртвые монеты.
+    drawdown_min: 50,
+    drawdown_max: 95,
     holders_growth_min: 3,
     maker_min: 120,
   },

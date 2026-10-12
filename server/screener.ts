@@ -6,7 +6,7 @@
  * даёт sentiment >= 6 и is_organic === true. При сбое LLM сигнал НЕ создаётся.
  */
 import { ensureClock, worldStart, virtualNow, getSettings, getDb, audit } from "./db.ts";
-import { readDataMode } from "./config.ts";
+import { readDataMode, getEnvNum } from "./config.ts";
 import {
   createMockSource,
   type DataSource,
@@ -29,7 +29,8 @@ import {
 import { rug as rugcheckRug } from "./sources/rugcheck.ts";
 import { holders as fluxHolders } from "./sources/helius.ts";
 import { jupiterPrice } from "./sources/jupiter.ts";
-import { geminiOverview, geminiSocial } from "./sources/gemini.ts";
+import { geminiOverview } from "./sources/gemini.ts";
+import { assessSocial, MIN_MENTIONS_24H } from "./sources/apify.ts";
 import { requestCount, resetRequests } from "./sources/net.ts";
 import type {
   Check,
@@ -58,12 +59,23 @@ const TOP10_UPPER_REF_PCT = 30;
  * Потолок сетевых запросов на один скан (live): не даём скану «залить» API.
  * Предфильтр кандидатов по возрасту/ликвидности держит этот бюджет: в дорогую
  * воронку (RugCheck/RPC/свечи) идут только прошедшие, а не все подряд.
+ * РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: 70 → 140. На 70 бюджет исчерпывался за ~11
+ * кандидатов, и 26 из 38 вообще не оценивались (уходили в rejected_by_layer
+ * ["budget"]); 140 даёт воронке дойти до большей части списка.
  */
-export const MAX_SCAN_REQUESTS = 70;
+export const MAX_SCAN_REQUESTS = 220;
+/**
+ * Потолок ВРЕМЕНИ скана, мс (переопределяется SCAN_MAX_MS в тестах). GeckoTerminal
+ * троттлится ~30/мин, поэтому бюджет 140 запросов сам по себе может идти дольше
+ * трёх минут. Что наступит раньше — бюджет запросов или этот дедлайн — то и
+ * остановит скан; остаток кандидатов честно уходит в rejected_by_layer["budget"].
+ */
+export const MAX_SCAN_MS = 480_000;
 
 /**
- * Порог органичности Jupiter (organicScore 0..100). Ярлык «low» = ровно 0 —
- * признаки накрутки объёма; порог 30 отсекает «low» и оставляет medium/high.
+ * Порог органичности Jupiter (organicScore 0..100) для ИНФОРМАЦИОННОЙ пометки
+ * «низкая органичность» в checks слоя 4 (сам порог больше НЕ блокирует сигнал).
+ * Ярлык «low» = ровно 0; score < 30 показываем как «низкая органичность».
  */
 const ORGANIC_MIN_SCORE = 30;
 /**
@@ -112,8 +124,9 @@ function createLiveSource(): DataSource {
     async overview(ref, market) {
       return geminiOverview(ref, market);
     },
-    async social(ref, market) {
-      return geminiSocial(ref, market);
+    async social(ref, market, now) {
+      // Медиаслой (Apify) + оценка тональности/органичности; см. sources/apify.ts.
+      return assessSocial(ref, now);
     },
   };
 }
@@ -222,6 +235,8 @@ async function screenCandidate(
       avg_trade_usd: 0,
       top10_na: true,
       holders_growth_na: true,
+      makers_na: true,
+      makers_note: "не оценивалось (слои 1–3 не пройдены)",
     };
   }
 
@@ -254,64 +269,131 @@ async function screenCandidate(
   // Коридор считаем полной шириной (max-min)/mid; порог «±range_pct» -> 2*range_pct.
   // Нет дневных свечей → коридор/просадку измерить нельзя: value=null и причина.
   const candlesNA = market.candles_na === true;
-  const tight = !candlesNA && market.range_pct <= 2 * s.range_pct;
+  // ПРИНЦИП: «не измерено» ≠ «не прошло». Раньше при троттлинге GeckoTerminal свечи
+  // не приходили, и оба чека падали как провал — кандидат отбраковывался за то,
+  // что замер не состоялся (та же ошибка, что была у мейкеров). Теперь отсутствие
+  // свечей — честное value=null в checks и НЕ блокирует; блокирует только
+  // измеренное нарушение. Иначе на 38 кандидатах мы теряем половину воронки из-за
+  // лимитов чужого API, а не из-за рынка.
+  const tight = candlesNA ? true : market.range_pct <= 2 * s.range_pct;
   const dd = market.drawdown_from_ath_pct;
-  const okDd = !candlesNA && dd >= s.drawdown_min && dd <= s.drawdown_max;
-  const okGrowth = holders.holders_growth_na === true ? true : holders.holders_growth_pct >= s.holders_growth_min;
-  const washOK = !s.wash_filter || holders.makers_24h >= s.maker_min;
-  // Органичность из Jupiter: ярлык «low» (score 0) = признаки накрутки. Нет
-  // данных — не блокируем (value=null, честная причина).
+  const okDd = candlesNA ? true : dd >= s.drawdown_min && dd <= s.drawdown_max;
+  // Прирост холдеров: порог holders_growth_min — за 7 ДНЕЙ, значение —
+  // ОЦЕНКА из суточного изменения (×7, см. helius.ts). Нет данных — не блокируем.
+  const growthNA = holders.holders_growth_na === true;
+  const okGrowth = growthNA ? true : holders.holders_growth_pct >= s.holders_growth_min;
+  // wash_filter: замер НЕ состоялся (нет данных о сделках — 429/недоступность
+  // GeckoTerminal) → НЕ блокируем, value=null. Честный ноль мейкеров из
+  // полученной выборки — блокируем как раньше (накрутка объёма).
+  const makersNA = holders.makers_na === true;
+  const washOK = !s.wash_filter || makersNA || holders.makers_24h >= s.maker_min;
+  // Органичность из Jupiter: ИНФОРМАЦИОННАЯ проверка, НЕ блокирует.
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: ярлык «low» (score 0) — непрозрачный
+  // показатель одного источника, и раньше он В ОДИНОЧКУ убивал кандидата, у
+  // которого всё остальное в слое 4 идеально (пример: RKC). Теперь «low»
+  // честно помечается отдельным пунктом checks, но НЕ влияет на ok4. От накрутки
+  // объёма защищает наша собственная проверка wash_filter (уникальные мейкеры):
+  // она остаётся блокирующей, если тумблер включён.
   const organicNA = holders.organic_score == null && !holders.organic_label;
   const organicLabel = (holders.organic_label ?? "").toLowerCase();
-  const organicGood = organicNA
-    ? true
-    : organicLabel
-      ? organicLabel !== "low"
-      : (holders.organic_score ?? 0) >= ORGANIC_MIN_SCORE;
-  const okOrganicJup = !s.wash_filter || organicGood;
+  const organicLow = !organicNA
+    ? organicLabel
+      ? organicLabel === "low"
+      : (holders.organic_score ?? 0) < ORGANIC_MIN_SCORE
+    : false;
   // Слив ликвидности за сутки (Jupiter stats24h.liquidityChange, %). Нет данных
   // — не блокируем; резкое падение (ниже порога) — блокируем.
   const liqCh = market.liquidity_change_24h_pct ?? null;
   const okLiqChange = liqCh === null ? true : liqCh >= LIQ_DRAIN_MIN_PCT;
   checks.push(
-    chk(4, "tight_range", "Узкий коридор накопления", tight, candlesNA ? null : Math.round(market.range_pct * 10) / 10, candlesNA ? "нет свечей" : `≤${2 * s.range_pct}%`),
+    chk(4, "tight_range", "Узкий коридор накопления", tight, candlesNA ? null : Math.round(market.range_pct * 10) / 10, candlesNA ? "не измерено: нет свечей (не блокирует)" : `≤${2 * s.range_pct}%`),
   );
-  checks.push(chk(4, "drawdown", "Падение от максимума", okDd, candlesNA ? null : dd, candlesNA ? "нет свечей" : `${s.drawdown_min}..${s.drawdown_max}%`));
+  checks.push(chk(4, "drawdown", "Падение от максимума", okDd, candlesNA ? null : dd, candlesNA ? "не измерено: нет свечей (не блокирует)" : `${s.drawdown_min}..${s.drawdown_max}%`));
+  // Порог трактуется как рост за 7 дней; значение — оценка из суточных данных.
+  const growthThreshold = growthNA
+    ? "нет данных"
+    : isLive
+      ? `≥${s.holders_growth_min}% за 7 дней · оценка из суточных данных (×7)`
+      : `≥${s.holders_growth_min}% за 7 дней`;
   checks.push(
-    chk(4, "holders_growth", "Прирост холдеров за 24ч", okGrowth, holders.holders_growth_na === true ? null : holders.holders_growth_pct, holders.holders_growth_na === true ? "нет данных" : `≥${s.holders_growth_min}%`),
+    chk(4, "holders_growth", "Прирост холдеров за 7 дней", okGrowth, growthNA ? null : holders.holders_growth_pct, growthThreshold),
   );
   // Мейкеры live считаются по частичной выборке сделок — помечаем это в пороге.
-  const makersThreshold = !s.wash_filter ? "выключен" : `≥${s.maker_min}${holders.makers_partial ? " (частичная выборка)" : ""}`;
+  // Замер не состоялся (нет данных о сделках) — подпись с причиной, value=null.
+  const makersThreshold = !s.wash_filter
+    ? "выключен"
+    : makersNA
+      ? holders.makers_note || "нет данных о сделках"
+      : `≥${s.maker_min}${holders.makers_partial ? " (частичная выборка)" : ""}`;
   checks.push(
-    chk(4, "wash_filter", "Защита от накрутки объёма", washOK, holders.makers_24h, makersThreshold),
+    chk(4, "wash_filter", "Защита от накрутки объёма", washOK, makersNA ? null : holders.makers_24h, makersThreshold),
   );
+  // Органичность — информационно: ok:true всегда, честная подпись в threshold.
   checks.push(
-    chk(4, "organic_jupiter", "Органичность объёма (Jupiter)", okOrganicJup, organicNA ? null : (holders.organic_score ?? holders.organic_label ?? null), organicNA ? "нет данных" : "не low"),
+    chk(
+      4,
+      "organic_jupiter",
+      "Органичность объёма (Jupiter)",
+      true,
+      organicNA ? null : (holders.organic_score ?? holders.organic_label ?? null),
+      organicNA ? "нет данных" : organicLow ? "низкая органичность по оценке Jupiter (не блокирует)" : "не low",
+    ),
   );
   checks.push(
     chk(4, "liq_change", "Изменение ликвидности за 24ч", okLiqChange, liqCh === null ? null : Math.round(liqCh * 10) / 10, liqCh === null ? "нет данных" : `≥${LIQ_DRAIN_MIN_PCT}%`),
   );
-  const ok4 = tight && okDd && okGrowth && washOK && okOrganicJup && okLiqChange;
+  const ok4 = tight && okDd && okGrowth && washOK && okLiqChange;
 
-  // Слой 5 — Gemini. Выключенный тумблер не блокирует, но проверки остаются видимыми.
+  // Слой 5 — соцсеть: медиаслой (Apify, упоминания в X) + описание проекта.
+  // Медиаслой ДОРОГОЙ (тратит кредит Apify), поэтому в живой воронке он
+  // опрашивает ТОЛЬКО монеты, дошедшие до сигналов (ok1..ok4) — это и есть
+  // защита кредита (см. sources/apify.ts). В mock всё как раньше.
+  const socialEligible = s.llm_filter && (!isLive || (ok1 && ok2 && ok3 && ok4));
   let social: SocialData;
   let overview_ru = "";
-  if (s.llm_filter) {
+  if (socialEligible) {
     social = await src.social(ref, market, now);
     overview_ru = await src.overview(ref, market);
   } else {
     social = { sentiment: 0, is_organic: false, summary: "", mentions: [] };
   }
-  // LLM недоступен (нет ключа): слой виден, но НЕ блокирует и сигнал не создаёт.
-  const llmNA = s.llm_filter && social.llm_unavailable === true;
-  const okSent = !s.llm_filter || llmNA || social.sentiment >= 6;
-  const okOrganic = !s.llm_filter || llmNA || social.is_organic === true;
-  const sentValue = !s.llm_filter || llmNA ? null : social.sentiment;
-  const sentThreshold = !s.llm_filter ? "выключен" : llmNA ? "нет ключа" : "≥6";
+  // Данных нет (нет ключа Apify/Gemini или сбор не удался): проверки видны, но НЕ
+  // блокируют и сигнал не создают.
+  const llmNA = socialEligible && social.llm_unavailable === true;
+  // Лексиконная оценка идёт по словарю, и её шкала не совпадает со шкалой модели:
+  // требовать по ней порог «≥6» — значит отбраковывать сигналы наугад (живой
+  // пример: 5.7 у монеты с 10 живыми упоминаниями за сутки). Поэтому порог
+  // применяется только к оценке модели, а лексиконная показывается как ориентир.
+  const lexiconOnly = social.media_method === "lexicon";
+  const okSent = !socialEligible || llmNA || lexiconOnly || social.sentiment >= 6;
+  const okOrganic = !socialEligible || llmNA || social.is_organic === true;
+  const sentValue = !socialEligible || llmNA ? null : social.sentiment;
+  const sentThreshold = !s.llm_filter
+    ? "выключен"
+    : !socialEligible
+      ? "не оценивалось (слои 1–4 не пройдены)"
+      : llmNA
+        ? "нет данных"
+        : lexiconOnly
+          ? "лексиконная оценка — ориентир, не блокирует"
+          : "≥6 (оценка модели)";
   checks.push(chk(5, "sentiment", "Тональность соцсетей", okSent, sentValue, sentThreshold));
-  const orgThreshold = !s.llm_filter ? "выключен" : llmNA ? "нет ключа" : "true";
-  checks.push(chk(5, "organic", "Органичность интереса", okOrganic, !s.llm_filter || llmNA ? null : social.is_organic, orgThreshold));
-  const ok5 = okSent && okOrganic;
+  const orgThreshold = !s.llm_filter ? "выключен" : !socialEligible ? "не оценивалось (слои 1–4 не пройдены)" : llmNA ? "нет данных" : "true";
+  checks.push(chk(5, "organic", "Органичность интереса", okOrganic, !socialEligible || llmNA ? null : social.is_organic, orgThreshold));
+  // Слой 5, медиаслой: минимум упоминаний за 24 ч (порог — константа apify.
+  // MIN_MENTIONS_24H). Нет ключа или данных — value=null и НЕ блокирует.
+  const mentions24 = social.media_mentions_24h ?? null;
+  const mediaAvailable = socialEligible && mentions24 !== null;
+  const okMentions = !mediaAvailable || mentions24 >= MIN_MENTIONS_24H;
+  const mentionsThreshold = !s.llm_filter
+    ? "выключен"
+    : !socialEligible
+      ? "не оценивалось (слои 1–4 не пройдены)"
+      : mediaAvailable
+        ? `≥${MIN_MENTIONS_24H} за 24ч`
+        : social.media_note || "нет данных";
+  checks.push(chk(5, "mentions", "Упоминания в X за 24ч", okMentions, mediaAvailable ? mentions24 : null, mentionsThreshold));
+  const ok5 = okSent && okOrganic && okMentions;
 
   const indicators: Indicators = {
     svd: market.svd,
@@ -355,15 +437,20 @@ export async function runScan(): Promise<ScanResult> {
   // Счётчик сетевых запросов обнуляем на границе скана и следим за бюджетом.
   resetRequests();
   const now = virtualNow();
+  const startedAt = Date.now();
+  const maxMs = getEnvNum("SCAN_MAX_MS") || MAX_SCAN_MS;
   const candidates = await src.listCandidates();
   const rejected: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
   const passed: { ref: SourceRef; res: ScreenResult }[] = [];
 
   let processed = 0;
   for (const ref of candidates) {
-    // Бюджет исчерпан — дальше НЕ бьём по API. Счётчик виден в rejected_by_layer
-    // (форма ответа не меняется, лишь добавляется ключ).
-    if (requestCount() >= MAX_SCAN_REQUESTS) {
+    // Бюджет исчерпан (по запросам) ИЛИ вышли за потолок времени скана — дальше
+    // НЕ бьём по API. Счётчик виден в rejected_by_layer (форма ответа не
+    // меняется, лишь добавляется ключ). Дедлайн нужен потому, что GeckoTerminal
+    // троттлится ~30/мин и бюджет запросов сам по себе может идти дольше трёх
+    // минут; что наступит раньше — то и остановит скан.
+    if (requestCount() >= MAX_SCAN_REQUESTS || Date.now() - startedAt >= maxMs) {
       rejected["budget"] = candidates.length - processed;
       break;
     }
@@ -387,7 +474,7 @@ export async function runScan(): Promise<ScanResult> {
     ids.push(insertSignal(ref, res, now));
   }
 
-  audit("scan", { found: ids.length, rejected, requests: requestCount() }, "screener");
+  audit("scan", { found: ids.length, rejected, requests: requestCount(), ms: Date.now() - startedAt }, "screener");
   return { found: ids.length, ids, rejected_by_layer: rejected };
 }
 

@@ -103,3 +103,28 @@ export async function geminiSocial(ref: SourceRef, m: MarketData): Promise<Socia
     return { sentiment: 0, is_organic: false, summary: "", mentions: [], llm_unavailable: true };
   }
 }
+
+/** Оценка модели по собранным упоминаниям: тональность + органичность + резюме. */
+export interface MentionsAssessment {
+  sentiment: number;
+  is_organic: boolean;
+  summary: string;
+}
+
+/**
+ * Оценка соцфильтра ПО РЕАЛЬНЫМ публикациям (медиаслой Apify, слой 5). Тот же
+ * промпт, но данные — собранные упоминания. Бросает при отсутствии ключа/сбое:
+ * вызывающий (apify.assessSocial) тогда падает на лексикон.
+ */
+export async function geminiMentionsAssessment(
+  ref: SourceRef,
+  mentions: { author: string; text: string }[],
+): Promise<MentionsAssessment> {
+  const sample = mentions
+    .slice(0, 30)
+    .map((m) => `@${m.author || "?"}: ${m.text.replace(/\s+/g, " ").slice(0, 200)}`)
+    .join("\n");
+  const text = await generate(`${PROMPT_SOCIAL}\n\nТокен ${ref.symbol}. Публикации в X:\n${sample}`);
+  const p = parseSocial(text);
+  return { sentiment: p.sentiment, is_organic: p.is_organic, summary: p.summary };
+}

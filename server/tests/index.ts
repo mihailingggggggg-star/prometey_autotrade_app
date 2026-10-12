@@ -22,3 +22,5 @@ import "./auth.test.ts";
 import "./live.test.ts";
 import "./jupiter.test.ts";
 import "./thresholds.test.ts";
+import "./media.test.ts";
+import "./refine.test.ts";

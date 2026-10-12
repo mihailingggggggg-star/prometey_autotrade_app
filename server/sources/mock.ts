@@ -88,6 +88,15 @@ export interface HolderData {
   holders_growth_na?: boolean;
   /** Только live: мейкеры оценены по частичной выборке сделок. */
   makers_partial?: boolean;
+  /**
+   * Только live: замер мейкеров НЕ состоялся (GeckoTerminal 429/недоступен, пул
+   * не найден). Отличается от ЧЕСТНОГО нуля мейкеров, полученного из данных:
+   * при makers_na проверка wash_filter не блокирует (value=null), честный ноль —
+   * блокирует как раньше.
+   */
+  makers_na?: boolean;
+  /** Только live: причина недоступности замера мейкеров (для подписи в checks). */
+  makers_note?: string;
   /** Только live (Jupiter): органичность 0..100 (0 у ярлыка «low»). null — нет данных. */
   organic_score?: number | null;
   /** Только live (Jupiter): ярлык органичности low/medium/high. null — нет данных. */
@@ -108,6 +117,14 @@ export interface SocialData {
   mentions: { ts: number; source: string; title: string; url: string; score: number }[];
   /** Только live: LLM недоступен (нет ключа) → слой не блокирует и не создаёт сигнал. */
   llm_unavailable?: boolean;
+  /** Только live (медиаслой): сколько упоминаний за 24ч; null — данных нет. */
+  media_mentions_24h?: number | null;
+  /** Только live (медиаслой): чем закончился сбор (для подписи чека слоя 5). */
+  media_note?: string;
+  /** Только live (медиаслой): откуда данные — кэш/актор/нет. */
+  media_source?: "cache" | "apify" | "none";
+  /** Только live (медиаслой): чем считалась тональность — моделью или словарём. */
+  media_method?: "gemini" | "lexicon";
 }
 
 export interface DataSource {

@@ -56,6 +56,7 @@ import {
   candlesFor,
 } from "./demo.ts";
 import { getKeysStatus, setKeys } from "./keys.ts";
+import { assessSocial, cachedSocialMentions } from "./sources/apify.ts";
 import type {
   Health,
   Signal,
@@ -116,12 +117,17 @@ function safeParse<T>(json: string, fallback: T): T {
 }
 
 function signalDetail(row: SignalRow): SignalDetail {
+  const social = safeParse<Social>(row.social_json, { sentiment: 0, is_organic: false, summary: "", mentions: [] });
+  // mentions[] отдаём из КЭША медиаслоя (свежие упоминания), если он есть; иначе
+  // оставляем то, что записали при скане (mock/старые сигналы). Форма ответа та же.
+  const cached = cachedSocialMentions(row.token_addr);
+  if (cached.length > 0) social.mentions = cached;
   return {
     signal: signalDTO(row),
     checks: safeParse<Check[]>(row.checks_json, []),
     indicators: safeParse<Indicators>(row.metrics_json, {} as Indicators),
     overview_ru: row.overview_ru,
-    social: safeParse<Social>(row.social_json, { sentiment: 0, is_organic: false, summary: "", mentions: [] }),
+    social,
   };
 }
 
@@ -380,6 +386,33 @@ const routes: Route[] = [
     method: "POST",
     pattern: "/api/scan",
     handler: async (): Promise<ScanResult> => runScan(),
+  },
+  {
+    method: "POST",
+    pattern: "/api/media/refresh",
+    // Ручная проверка медиаслоя по АДРЕСУ монеты: обновляет кэш упоминаний и
+    // возвращает оценку. Побочных эффектов на сигналы и позиции НЕТ — только
+    // чтение/запись медиакэша (Apify), торговая логика не затрагивается.
+    handler: async ({ body }) => {
+      const token = String(body.token ?? "").trim();
+      if (!token) throw new ApiError("missing_token", 400, "параметр token обязателен (адрес монеты)");
+      const row = getDb()
+        .prepare("SELECT symbol, name FROM signals WHERE token_addr=? ORDER BY ts DESC, id DESC LIMIT 1")
+        .get(token) as { symbol: string; name: string } | undefined;
+      const ref = { token_addr: token, pair_addr: "", symbol: row?.symbol ?? "?", name: row?.name ?? "?" };
+      const social = await assessSocial(ref);
+      return {
+        token,
+        symbol: ref.symbol,
+        source: social.media_source ?? "none",
+        note: social.media_note ?? "",
+        mentions_24h: social.media_mentions_24h ?? null,
+        sentiment: social.sentiment,
+        is_organic: social.is_organic,
+        summary: social.summary,
+        mentions: social.mentions,
+      };
+    },
   },
   {
     method: "GET",

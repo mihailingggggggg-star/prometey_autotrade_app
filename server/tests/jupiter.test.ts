@@ -252,7 +252,8 @@ test("jupiter: слой 2 работает БЕЗ RPC на данных Jupiter"
       assert.notEqual(h.top10_na, true, "без RPC доля топ-10 берётся из Jupiter");
       assert.equal(h.top10_holders_pct, 7.5);
       assert.equal(h.holders_growth_na, false, "прирост холдеров из stats24h.holderChange");
-      assert.equal(h.holders_growth_pct, 5);
+      // Порог holders_growth_min — за 7 дней, значение — оценка из суточного (×7).
+      assert.equal(h.holders_growth_pct, 35, "5% за сутки ⇒ оценка 35% за 7 дней (×7)");
       assert.equal(h.organic_label, "high");
     },
   );

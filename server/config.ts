@@ -41,6 +41,14 @@ export const ENV_DEFAULTS: Record<string, string> = {
   TELEGRAM_CHAT_ID: "",
   HELIUS_API_KEY: "",
   GEMINI_API_KEY: "",
+  // Медиаслой (Apify): сбор упоминаний токена в X. Имена и дефолты — ровно как в
+  // .env.example (файл не правим). Без APIFY_TOKEN медиаслой честно выключен.
+  APIFY_TOKEN: "",
+  APIFY_TWEET_ACTOR: "apidojo~tweet-scraper",
+  APIFY_MAX_ITEMS: "50",
+  APIFY_TIMEOUT_SEC: "180",
+  APIFY_DAILY_ITEMS: "1000",
+  MEDIA_TTL_MIN: "30",
   WALLET_SECRET: "",
   DEMO_START_BALANCE: "500",
   DEMO_MONTHLY_DEPOSIT: "500",

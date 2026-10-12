@@ -160,24 +160,38 @@ export async function holders(ref: SourceRef): Promise<LiveHolderData> {
   }
   if (jup) {
     if (out.holders === 0 && jup.holder_count > 0) out.holders = jup.holder_count;
+    // ПОРОГ holders_growth_min трактуется как рост ЗА 7 ДНЕЙ (решение владельца),
+    // а Jupiter даёт изменение ЗА СУТКИ (stats24h.holderChange, %). Своей истории
+    // холдеров у нас пока нет, поэтому честно ОЦЕНИВАЕМ недельный рост из
+    // суточного (×7); подпись в checks это проговаривает. Иначе живой недельный
+    // рост ~4% выглядел бы как суточные 0.59% и кандидат зря отбраковывался.
     if (jup.holders_change_24h_pct !== null) {
-      out.holders_growth_pct = r2(jup.holders_change_24h_pct);
+      out.holders_growth_pct = r2(jup.holders_change_24h_pct * 7);
       out.holders_growth_na = false;
     }
     if (jup.organic_score !== null) out.organic_score = r2(jup.organic_score);
     if (jup.organic_label) out.organic_label = jup.organic_label;
   }
 
-  // Мейкеры за сутки — по выборке сделок пула (не зависит от RPC).
+  // Мейкеры за сутки — по выборке сделок пула (не зависит от RPC). ВАЖНО:
+  // недоступность GeckoTerminal (429/сеть) или отсутствие пула — это «замер НЕ
+  // состоялся» (makers_na), а НЕ честный ноль. Иначе троттлинг молча отбраковал
+  // бы кандидата проверкой wash_filter (нужно ≥ maker_min). Честный ноль (данные
+  // пришли, адресов в выборке нет) остаётся нулём и блокирует как раньше.
   try {
     const pool = await poolForToken(ref.token_addr);
     if (pool) {
       const mk = await tradesMakers(pool);
       out.makers_24h = mk.makers;
       out.makers_partial = mk.partial;
+    } else {
+      out.makers_na = true;
+      out.makers_note = "нет данных о сделках";
     }
   } catch {
-    // Нет сделок/пула — мейкеры остаются не измеренными (0).
+    // 429/сеть/нет сделок: замер НЕ состоялся (не путать с честным нулём).
+    out.makers_na = true;
+    out.makers_note = "нет данных о сделках";
   }
 
   // Доля топ-10. ДВА метода измерения — РАЗНЫЕ пороги и подписи в checks:

@@ -504,7 +504,7 @@ test("live: бюджет сетевых запросов на скан не пр
     screener: { ...DEFAULT_SETTINGS.screener, age_min: 30, age_max: 180, liq_min: 20000, liq_max: 150000 },
   });
   const now = Date.now();
-  const main = Array.from({ length: 12 }, (_, i) => geckoPoolFixture(`Main${i}`, 60, 50_000, now));
+  const main = Array.from({ length: 40 }, (_, i) => geckoPoolFixture(`Main${i}`, 60, 50_000, now));
   const trend = Array.from({ length: 3 }, (_, i) => geckoPoolFixture(`Trend${i}`, 60, 50_000, now));
 
   await withFetch(
@@ -663,16 +663,18 @@ test("live: монета Jupiter доходит до сигнала БЕЗ RPC (
   setSettings(DEFAULT_SETTINGS);
 });
 
-test("live: нет дневных свечей у монеты Jupiter — слой 4 даёт null, скан продолжается", async () => {
+test("live: нет дневных свечей — слой 4 не отбраковывает по неизмеренному, скан продолжается", async () => {
   process.env.DATA_MODE = "live";
   delete process.env.FLUX_RPC_URL;
   cacheClear();
   setSettings(DEFAULT_SETTINGS);
+  // GeckoTerminal часто отдаёт пустой ряд из-за троттлинга. Раньше это считалось
+  // провалом слоя 4, и кандидат отбраковывался не по рынку, а по лимиту чужого
+  // API. Теперь «не измерено» видно в checks как value=null и НЕ блокирует.
   const empty = { data: { attributes: { ohlcv_list: [] } } };
   await withFetch(matureHandler(empty), async () => {
     const r = await runScan();
-    assert.equal(r.found, 0, "без дневной истории сигнала быть не должно");
-    assert.ok((r.rejected_by_layer["4"] ?? 0) >= 1, "кандидат должен дойти до слоя 4 и упасть на нём: " + JSON.stringify(r.rejected_by_layer));
+    assert.equal(r.rejected_by_layer["4"] ?? 0, 0, "неизмеренное не должно отбраковывать: " + JSON.stringify(r.rejected_by_layer));
   });
   process.env.DATA_MODE = "mock";
   setSettings(DEFAULT_SETTINGS);
