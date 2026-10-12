@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "server": "node server/index.ts",
+    "dev:all": "node scripts/dev.mjs",
+    "test:server": "node --test server/tests/",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host"
   },

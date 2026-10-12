@@ -17,5 +17,17 @@ export default defineConfig({
   define: { __BUILD__: JSON.stringify(BUILD) },
   base: process.env.VITE_BASE || "/prometey_autotrade_app/",
   plugins: [react(), tailwindcss()],
-  server: { port: 5178, host: true },
+  server: {
+    port: 5178,
+    host: true,
+    /* В разработке клиент ходит в собственный origin: Vite проксирует /api на
+       локальный сервер демо-контура. Так нет ни CORS, ни адреса API в коде, и
+       сборка одна и та же для локального запуска и для туннеля. */
+    proxy: {
+      "/api": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8788",
+        changeOrigin: true,
+      },
+    },
+  },
 });
