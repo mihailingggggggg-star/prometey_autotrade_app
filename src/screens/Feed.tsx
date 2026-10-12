@@ -18,11 +18,10 @@ import { useState } from "react";
 import { Radar, Search } from "lucide-react";
 import { listSignals, scan } from "../lib/api";
 import { useApi } from "../lib/useApi";
-import type { DataMode, Signal } from "../../shared/types";
-import { Glass, Press, Row, Title } from "../ui/kit";
-import { TokenLogo } from "../ui/TokenLogo";
+import type { DataMode } from "../../shared/types";
+import { Glass, Press, Title } from "../ui/kit";
+import { SignalCard } from "../ui/SignalCard";
 import { Loading, ErrorBox, DemoBanner } from "../ui/states";
-import { price, ago } from "../lib/format";
 import type { CoinRef } from "./CoinDetail";
 
 export function Feed({ refreshKey, onOpen, mode }: {
@@ -86,61 +85,11 @@ export function Feed({ refreshKey, onOpen, mode }: {
       {data && data.length > 0 && (
         <div className="px-4 mt-3 space-y-2.5">
           {data.map((s) => (
-            <Press key={s.id} onClick={() => onOpen({
-              signalId: s.id, tokenAddr: s.token_addr, symbol: s.symbol, name: s.name,
-            })} className="block w-full" scale={0.975} feel="press">
-              <SignalCard s={s} />
-            </Press>
+            <SignalCard key={s.id} s={s} onOpen={onOpen} />
           ))}
         </div>
       )}
     </div>
-  );
-}
-
-function SignalCard({ s }: { s: Signal }) {
-  const organic = s.is_organic;
-  return (
-    <Glass flat className="overflow-hidden">
-      {/* Шапка: ЧТО нашли — знак, тикер, имя, цена и давность. */}
-      <div className="px-4 pt-3.5 pb-3 flex items-center gap-3">
-        <TokenLogo symbol={s.symbol} size={44} />
-        <div className="flex-1 min-w-0">
-          <div className="text-[17px] font-semibold tracking-tight truncate">{s.symbol}</div>
-          <div className="text-[13px] truncate" style={{ color: "var(--label-2)" }}>{s.name}</div>
-        </div>
-        <div className="text-right shrink-0">
-          <div className="text-[16px] font-semibold tabular-nums">${price(s.price)}</div>
-          <div className="text-[11px] tabular-nums" style={{ color: "var(--label-3)" }}>{ago(s.ts * 1000)}</div>
-        </div>
-      </div>
-
-      {/* ПОЧЕМУ оно здесь: плашка фазы и, если нужно, отметка «не органика». */}
-      <div className="px-4 pb-1 flex items-center gap-1.5 flex-wrap">
-        <span className="text-[11px] px-1.5 py-0.5 rounded-md font-semibold"
-              style={{ background: "color-mix(in srgb, var(--green) 16%, transparent)", color: "var(--green)" }}>
-          {s.status_label || "Фаза накопления подтверждена"}
-        </span>
-        {!organic && (
-          <span className="text-[11px] px-1.5 py-0.5 rounded-md font-medium"
-                style={{ background: "color-mix(in srgb, var(--orange) 14%, transparent)", color: "var(--orange)" }}>
-            не органика
-          </span>
-        )}
-      </div>
-
-      {/* Числа — строками, а не самодельной сеткой: тот же язык, что в кабинете. */}
-      <div className="mt-2.5">
-        <Row title="Скоринг"
-             right={<span className="tabular-nums font-semibold" style={{ color: "var(--label)" }}>{s.score}</span>} />
-        <Row title="Сентимент"
-             right={<span className="tabular-nums"
-                           style={{ color: s.sentiment >= 6 ? "var(--green)" : "var(--orange)" }}>
-               {s.sentiment}/10
-             </span>} />
-        <Row last title="Таймфрейм" right={s.tf_accum} />
-      </div>
-    </Glass>
   );
 }
 

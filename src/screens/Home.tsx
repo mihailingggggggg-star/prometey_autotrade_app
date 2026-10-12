@@ -12,20 +12,23 @@
  * берутся готовыми с сервера. Сутки — календарные по Бишкеку (UTC+6), как в
  * отчётности бота; иначе «День» на главной спорил бы с днём в аналитике.
  *
- * Ниже — быстрые действия в стиле прежних `QuickAction` и короткая сводка по
- * открытым позициям. Всё собрано из готовых примитивов (`Title`, `Glass`,
- * `Press`, `Segmented`, `Row`, `Sheet`) — своего «панельного» языка у главной
- * нет.
+ * Ниже — быстрые действия в стиле прежних `QuickAction`, лента последних
+ * сигналов скринера (те же карточки, что на вкладке «Сигналы», чтобы их можно
+ * было листать прямо с главной) и короткая сводка по открытым позициям. Порядок
+ * строгий: сначала финансы, потом сигналы. Всё собрано из готовых примитивов
+ * (`Title`, `Glass`, `Press`, `Segmented`, `Row`, `Sheet`) — своего «панельного»
+ * языка у главной нет.
  */
 import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { ChevronRight, Plus, Radar, RefreshCw } from "lucide-react";
 import {
-  addDeposit, analyticsSummary, getSettings, listPositions, listTrades, scan,
+  addDeposit, analyticsSummary, getSettings, listPositions, listSignals, listTrades, scan,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
 import type { DataMode, Position } from "../../shared/types";
 import { Aurora, Glass, GroupLabel, Press, Row, Segmented, Sheet, Title, tone } from "../ui/kit";
+import { SignalCard } from "../ui/SignalCard";
 import { TokenLogo } from "../ui/TokenLogo";
 import { DemoBanner, ErrorBox, Loading } from "../ui/states";
 import { money as fmtMoney, pct, plural, price as fmtPrice, rr } from "../lib/format";
@@ -54,10 +57,12 @@ function periodFrom(p: Period, nowSec: number): number {
   return p === "d" ? dayStart : dayStart - 6 * 86400;
 }
 
-export function Home({ refreshKey, onOpen, onChanged, mode }: {
+export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
   refreshKey: number;
   onOpen: (ref: CoinRef) => void;
   onChanged: () => void;
+  /** Переход на вкладку «Сигналы» — по строке «Показать все сигналы». */
+  onShowAll: () => void;
   /** Режим данных: в mock над карточкой стоит плашка «демо-данные». */
   mode?: DataMode | null;
 }) {
@@ -65,6 +70,10 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
   const positions = useApi(() => listPositions(), 15000, [refreshKey]);
   const trades = useApi(() => listTrades(500), 15000, [refreshKey]);
   const settings = useApi(getSettings, 0, [refreshKey]);
+  // Лента сигналов на главной: те же данные и тот же опрос, что на вкладке
+  // «Сигналы» (экраны не видны одновременно, поэтому API не дёргается вдвое).
+  // На главной берём короткий хвост — 10–15 последних, а не всю ленту.
+  const signals = useApi(() => listSignals({ limit: 15 }), 20000, [refreshKey]);
 
   const [period, setPeriod] = useState<Period>("d");
   const [detail, setDetail] = useState(false);
@@ -198,6 +207,43 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
       </div>
       {notice && (
         <div className="px-5 pt-2 text-[13px]" style={{ color: "var(--label-2)" }}>{notice}</div>
+      )}
+
+      {/* ── Сигналы скринера ─────────────────────────────────────────────── */}
+      {/* Строго ниже финансов: сначала результат и быстрые действия, потом то,
+          что нашёл скринер. Карточки — общий `SignalCard` (тот же вид, что на
+          вкладке «Сигналы»). Лента прокручивается вместе со страницей, своего
+          узкого скролла у неё нет; показываем 10–15 последних, дальше — строка
+          перехода на вкладку, чтобы можно было листать всю ленту. */}
+      <GroupLabel>Сигналы скринера</GroupLabel>
+      {signals.loading && !signals.data && <Loading label="загружаем сигналы…" />}
+      {!signals.loading && signals.error && (
+        <ErrorBox text={signals.error} onRetry={signals.refresh} />
+      )}
+      {signals.data && signals.data.length === 0 && !signals.error && (
+        <div className="px-4">
+          <Glass flat className="p-4 flex items-center gap-3">
+            <span className="flex-1 text-[14px] leading-snug" style={{ color: "var(--label-2)" }}>
+              Сигналов пока нет — запустите скан, он поищет монеты в фазе накопления.
+            </span>
+            <Press onClick={runScan} disabled={busy === "scan"} className="shrink-0">
+              <Glass flat className="px-4 py-2 text-[14px] font-semibold">Сканировать</Glass>
+            </Press>
+          </Glass>
+        </div>
+      )}
+      {signals.data && signals.data.length > 0 && (
+        <div className="px-4 space-y-2.5">
+          {signals.data.map((s) => (
+            <SignalCard key={s.id} s={s} onOpen={onOpen} />
+          ))}
+          <Press onClick={onShowAll} className="block w-full" feel="press">
+            <Glass flat className="py-3 flex items-center justify-center gap-1 text-[15px] font-semibold"
+                   style={{ color: "var(--tint-soft)" }}>
+              Показать все сигналы <ChevronRight size={16} />
+            </Glass>
+          </Press>
+        </div>
       )}
 
       {/* ── Открытые позиции ─────────────────────────────────────────────── */}

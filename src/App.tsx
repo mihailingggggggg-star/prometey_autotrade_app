@@ -109,7 +109,10 @@ export function App() {
             приклеенной к низу. */}
         <main className="scroll relative z-10 flex-1 min-h-0"
               style={{ paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 22px)", overscrollBehavior: "contain" }}>
-          {tab === "home" && <Home refreshKey={refreshKey} onOpen={setCoin} onChanged={refresh} mode={mode} />}
+          {tab === "home" && (
+            <Home refreshKey={refreshKey} onOpen={setCoin} onChanged={refresh}
+                  onShowAll={() => setTab("signals")} mode={mode} />
+          )}
           {tab === "signals" && <Feed refreshKey={refreshKey} onOpen={setCoin} mode={mode} />}
           {tab === "positions" && <Positions refreshKey={refreshKey} onOpen={setCoin} />}
           {tab === "analytics" && <Analytics refreshKey={refreshKey} />}
