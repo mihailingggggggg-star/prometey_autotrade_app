@@ -29,20 +29,105 @@ export function apiBase(): string {
   }
 }
 
+/* ── ключ доступа к API ──────────────────────────────────────────────────────
+ * Сервер при заданном API_TOKEN требует заголовок X-Api-Token. Ключ живёт
+ * ТОЛЬКО в localStorage этого устройства и наружу (в интерфейс, ссылки, ответы)
+ * не выводится — виден лишь признак «задан». */
+
+export const TOKEN_KEY = "solana.token";
+
+/** Ключ доступа из памяти браузера; пусто — не задан. */
+export function getToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Запомнить ключ. Пустая строка означает «стереть», а не «оставить мусор». */
+export function setToken(value: string): void {
+  try {
+    const v = value.trim();
+    if (v) localStorage.setItem(TOKEN_KEY, v);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Приватный режим: сохранить не выйдет — экран продолжит спрашивать ключ.
+  }
+}
+
+/** Задан ли ключ. Сам ключ не показываем — только этот признак. */
+export function hasToken(): boolean {
+  return getToken().length > 0;
+}
+
+/**
+ * Перенять ключ из адреса `?t=<ключ>` и сразу убрать его оттуда. Зовётся один
+ * раз при старте: адрес остаётся в истории, закладках и на скриншотах, ключу там
+ * не место. Для установленного на iOS приложения этот адрес приходит из
+ * персонального манифеста ярлыка (см. lib/pwa.ts) — у него СВОЙ localStorage.
+ */
+export function captureTokenFromUrl(): void {
+  if (typeof window === "undefined") return;
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    return;
+  }
+  const t = params.get("t");
+  if (!t) return;
+  setToken(t);
+  params.delete("t");
+  const q = params.toString();
+  const clean = window.location.pathname + (q ? `?${q}` : "") + window.location.hash;
+  window.history.replaceState(null, "", clean);
+}
+
+/** Экран «нужен ключ доступа» подписывается здесь: ЛЮБОЙ ответ 401 поднимает его,
+ *  а не только первый запрос. Так смена ключа проверяется в одном месте. */
+type UnauthorizedHandler = () => void;
+const unauthorizedHandlers = new Set<UnauthorizedHandler>();
+
+export function onUnauthorized(fn: UnauthorizedHandler): () => void {
+  unauthorizedHandlers.add(fn);
+  return () => { unauthorizedHandlers.delete(fn); };
+}
+
+/** Ошибка «сервер требует ключ»: экран обязан отличать её от прочих сбоев. */
+export class UnauthorizedError extends Error {
+  readonly code = "unauthorized";
+  constructor(message: string) {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
 /** Единый текст для «сервер не отвечает»: экран обязан показать ПРИЧИНУ, а не
  *  пустоту, поэтому сетевой сбой превращается в понятное человеку предложение. */
 export const NO_SERVER =
   "локальный сервер демо-контура не отвечает — запустите npm run server";
 
-type JsonInit = { method?: string; body?: unknown };
+type JsonInit = {
+  method?: string;
+  body?: unknown;
+  /** Ключ для этого запроса; по умолчанию — сохранённый в памяти браузера. */
+  token?: string;
+  /** false — ответ 401 не поднимает экран ввода ключа (проверка кандидата). */
+  notifyUnauthorized?: boolean;
+};
 
 async function call<T>(path: string, init: JsonInit = {}): Promise<T> {
-  const { method = "GET", body } = init;
+  const { method = "GET", body, token = getToken(), notifyUnauthorized = true } = init;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  // Ключ едет в ЗАГОЛОВКЕ, а не в строке запроса: строка живёт в логах и истории.
+  if (token) headers["X-Api-Token"] = token;
   let res: Response;
   try {
     res = await fetch(apiBase() + path, {
       method,
-      headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -61,7 +146,13 @@ async function call<T>(path: string, init: JsonInit = {}): Promise<T> {
     // Контракт ошибки: {"error":{"code","message"}}. Сообщение сервера уже
     // на русском — показываем его как есть, иначе подставляем статус.
     const err = (parsed as ApiErrorBody | null)?.error;
-    throw new Error(err?.message || `сервер вернул ошибку ${res.status}`);
+    const message = err?.message || `сервер вернул ошибку ${res.status}`;
+    if (res.status === 401) {
+      // Ключ не подошёл или не задан: приложение покажет экран ввода ключа.
+      if (notifyUnauthorized) unauthorizedHandlers.forEach((fn) => fn());
+      throw new UnauthorizedError(message);
+    }
+    throw new Error(message);
   }
   return parsed as T;
 }
@@ -139,3 +230,10 @@ export const seenAlert = (id: number) =>
 /* ── журнал ── */
 export const listAudit = (limit?: number) =>
   call<AuditEntry[]>(`/api/audit${limit ? `?limit=${limit}` : ""}`);
+
+/* ── проверка ключа ── */
+/** Проверка КОНКРЕТНОГО ключа без его сохранения: ответ 200 — ключ принят.
+ *  Отказ (401) не поднимает экран гейта: это проверка кандидата, а не отказ
+ *  рабочему ключу. Минимальный аутентифицированный маршрут — настройки. */
+export const probeAuth = (token: string) =>
+  call<Settings>("/api/settings", { token, notifyUnauthorized: false });

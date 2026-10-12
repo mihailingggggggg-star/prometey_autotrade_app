@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { ClipboardList, KeyRound, Save } from "lucide-react";
 import {
   addDeposit, analyticsSummary, keysStatus, listAudit, getSettings, updateKeys, updateSettings,
+  hasToken, probeAuth, setToken, UnauthorizedError,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
 import type { KeysUpdate, Settings, SettingsPatch } from "../../shared/types";
@@ -36,6 +37,11 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
   const [fields, setFields] = useState<KeysUpdate>({});
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Ключ доступа к API: сам ключ не показываем — только признак «задан».
+  const [apiKey, setApiKey] = useState("");
+  const [apiKeySet, setApiKeySet] = useState(hasToken());
+  const [apiBusy, setApiBusy] = useState(false);
 
   const patch = (p: SettingsPatch) => {
     if (!draft) return;
@@ -91,6 +97,28 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
     catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   };
 
+  // Ключ проверяется ДО сохранения: неверный не осядет в хранилище, и опрос
+  // тут же снова не поднимет экран «нужен ключ доступа».
+  const saveApiKey = async () => {
+    const v = apiKey.trim();
+    if (!v) { setNotice("введите ключ доступа"); return; }
+    setApiBusy(true);
+    setNotice(null);
+    try {
+      await probeAuth(v);
+      setToken(v);
+      setApiKey("");
+      setApiKeySet(true);
+      setNotice("Ключ доступа сохранён");
+    } catch (e) {
+      setNotice(e instanceof UnauthorizedError
+        ? "ключ не подошёл — проверьте значение"
+        : e instanceof Error ? e.message : String(e));
+    } finally {
+      setApiBusy(false);
+    }
+  };
+
   const s = summary.data;
 
   return (
@@ -101,6 +129,34 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
         <div className="mx-5 mb-2 text-[13px] leading-snug px-3 py-2 rounded-[12px]"
              style={{ background: "var(--bg-elev)", color: "var(--label-2)" }}>{notice}</div>
       )}
+
+      {/* ── ДОСТУП К API ── */}
+      <div className="px-3 mt-1">
+        <Panel title="Доступ к API">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[14px]">Ключ доступа к демо-контуру</span>
+            <span className="text-[12px] tabular-nums flex items-center gap-1"
+                  style={{ color: apiKeySet ? "var(--green)" : "var(--label-3)" }}>
+              {apiKeySet && <KeyRound size={12} />}
+              {apiKeySet ? "ключ задан" : "ключ не задан"}
+            </span>
+          </div>
+          <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                 type="password" autoComplete="off" spellCheck={false}
+                 placeholder="введите новый ключ"
+                 className="w-full px-3 py-2.5 rounded-[12px] text-[15px] outline-none"
+                 style={{ background: "var(--bg-elev)", color: "var(--label)" }} />
+          <Press onClick={saveApiKey} disabled={apiBusy} className="block w-full mt-2">
+            <div className="flex items-center justify-center gap-2 py-2.5 rounded-[12px] text-[14px] font-semibold"
+                 style={{ background: "var(--bg-elev)", opacity: apiBusy ? 0.6 : 1 }}>
+              Сохранить ключ
+            </div>
+          </Press>
+          <p className="text-[12px] mt-2 leading-snug" style={{ color: "var(--label-3)" }}>
+            Ключ хранится только в этом устройстве и не показывается — виден лишь факт «задан».
+          </p>
+        </Panel>
+      </div>
 
       {/* ── КЛЮЧИ ── */}
       <div className="px-3 mt-1">

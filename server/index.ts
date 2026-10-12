@@ -4,7 +4,9 @@
  * Здесь же, тем же процессом и на том же порту, отдаётся собранный интерфейс из
  * каталога STATIC_DIR (по умолчанию ./dist рядом с репозиторием). Это осознанное
  * решение: интерфейс и API живут по одному origin — нет CORS, нет второго
- * тоннеля, а единственный адрес проще закрыть. Порт по умолчанию слушает только
+ * тоннеля. Доступ закрывает сам сервер: при заданном API_TOKEN все /api/* (кроме
+ * GET /api/health) требуют заголовок X-Api-Token, а статика остаётся открытой —
+ * её обязан получить ярлык PWA. Порт по умолчанию слушает только
  * 127.0.0.1. Если интерфейс не собран, сервер не падает: он работает как прежде
  * (только API) и пишет в stderr одну строку «интерфейс не собран, отдаю только API».
  *
@@ -22,6 +24,7 @@
  * сообщения, без секретов (stdout занят приложением, логов туда не шлём).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { basename, extname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,6 +37,7 @@ import {
   setSettings,
   signalById,
   getDb,
+  audit,
   type SignalRow,
 } from "./db.ts";
 import { runScan } from "./screener.ts";
@@ -497,6 +501,28 @@ const routes: Route[] = [
   },
 ];
 
+/* ─────────────── ключ доступа к API ─────────────── */
+
+/**
+ * Ключ доступа к API из .env. Пусто — контур открыт (локальная разработка).
+ * Значение НИКОГДА не логируем и не кладём в ответы: наружу уходит только факт.
+ */
+function apiToken(): string {
+  return getEnv("API_TOKEN").trim();
+}
+
+/**
+ * Совпал ли предъявленный ключ с ожидаемым. Сравниваем SHA-256-дайджесты через
+ * crypto.timingSafeEqual: дайджесты всегда 32 байта, поэтому ни длина ключа, ни
+ * позиция расхождения не утекают по времени ответа, а сравнение устойчиво к
+ * подбору. Побайтовое равенство дайджестов равносильно равенству исходных строк.
+ */
+function tokenOk(provided: string, expected: string): boolean {
+  const a = createHash("sha256").update(provided, "utf8").digest();
+  const b = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
@@ -509,6 +535,24 @@ async function handle(
   // вместо JSON-ошибки на неизвестный API-маршрут.
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
     try {
+      // Ключ доступа. Закрываем ТОЛЬКО данные и действия, а не всё приложение:
+      // статика (HTML, JS, CSS, манифест, иконки) остаётся открытой — в ней нет
+      // секретов, но её обязан получить ярлык PWA, иначе он остаётся серым
+      // квадратом. GET /api/health тоже открыт: он нужен мониторингу и секретов
+      // не содержит. Пустой API_TOKEN — поведение прежнее (всё открыто).
+      const token = apiToken();
+      const healthProbe = method === "GET" && url.pathname === "/api/health";
+      if (token && !healthProbe) {
+        const raw = req.headers["x-api-token"];
+        const provided = Array.isArray(raw) ? (raw[0] ?? "") : (raw ?? "");
+        if (!tokenOk(provided, token)) {
+          // В журнал — только факт отказа, маршрут и метод. Ни значения ключа,
+          // ни тела запроса там быть не должно.
+          audit("api.unauthorized", { method, route: url.pathname });
+          throw new ApiError("unauthorized", 401, "нужен ключ доступа к демо-контуру");
+        }
+      }
+
       let body: Record<string, unknown> = {};
       if (method === "POST" || method === "PUT" || method === "PATCH") body = await readBody(req);
 

@@ -10,10 +10,10 @@
  * открывается и из «Сигналов», и из «Позиций», и при возврате человек должен
  * попасть туда, откуда пришёл.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { RefreshCw } from "lucide-react";
-import { health, listAlerts } from "./lib/api";
+import { health, listAlerts, onUnauthorized } from "./lib/api";
 import { useApi } from "./lib/useApi";
 import { haptic } from "./lib/haptics";
 import { TabBar, type Tab } from "./nav/TabBar";
@@ -23,10 +23,14 @@ import { Positions } from "./screens/Positions";
 import { Analytics } from "./screens/Analytics";
 import { Profile } from "./screens/Profile";
 import { CoinDetail, type CoinRef } from "./screens/CoinDetail";
+import { TokenGate } from "./screens/TokenGate";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("signals");
   const [coin, setCoin] = useState<CoinRef | null>(null);
+  // Сервер ответил 401 — нужен ключ доступа. Показывается ВМЕСТО приложения,
+  // чтобы человек видел понятный экран, а не пустоту с ошибками на каждой вкладке.
+  const [needsToken, setNeedsToken] = useState(false);
   // Общий ключ обновления: действия на экранах меняют его, и все списки
   // перечитываются сразу, а не по своему таймеру.
   const [refreshKey, setRefreshKey] = useState(0);
@@ -39,6 +43,20 @@ export function App() {
     haptic.tap();
     setRefreshKey((k) => k + 1);
   }, []);
+
+  // Любой ответ 401 (не только первый) поднимает экран ввода ключа.
+  useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
+
+  if (needsToken) {
+    return (
+      <TokenGate
+        onUnlocked={() => {
+          setNeedsToken(false);
+          setRefreshKey((k) => k + 1);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="relative h-full flex flex-col">

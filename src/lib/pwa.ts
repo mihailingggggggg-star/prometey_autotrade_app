@@ -14,7 +14,26 @@
  *    ПОЛНЫЙ адрес текущей сессии, а ссылку на него подменяем на лету.
  */
 
+import { getToken } from "./api";
+
 const BASE = import.meta.env.BASE_URL || "/";
+
+/**
+ * Стартовый адрес ярлыка: адрес приложения + ключ доступа в параметре `t`.
+ *
+ * Нужен ровно из-за iOS. У УСТАНОВЛЕННОГО приложения СВОЙ localStorage, отдельный
+ * от Safari: ключ, положенный в браузере, в него не попадает, и ярлык открылся бы
+ * на экране «нужен ключ доступа». Поэтому стартовый адрес несёт ключ прямо в
+ * ссылке — при запуске он перехватывается (api.captureTokenFromUrl) и сохраняется
+ * уже в хранилище приложения. Адрес живёт только в манифесте ярлыка и сразу
+ * вычищается из видимой строки.
+ */
+export function installStartUrl(): string {
+  const url = new URL(BASE, location.origin);
+  const token = getToken();
+  if (token) url.searchParams.set("t", token);
+  return url.toString();
+}
 
 export const standalone = () => {
   // Telegram-обвязки в демо-контуре больше нет, поэтому проверять «мы внутри
@@ -27,9 +46,9 @@ export const standalone = () => {
 
 let blobUrl = "";
 
-/** Подменить манифест персональным. Зовётся перед тем, как человек добавляет
- *  ярлык: в этот момент в адресе уже есть и билет, и адрес API. */
-export function personalizeManifest(startUrl: string = location.href) {
+/** Подменить манифест персональным. Зовётся при старте и перед установкой:
+ *  статический start_url открывал бы ярлык без ключа доступа (см. installStartUrl). */
+export function personalizeManifest(startUrl: string = installStartUrl()) {
   const doc = {
     name: "SOLANA SWING BOT · демо",
     short_name: "SWING BOT",

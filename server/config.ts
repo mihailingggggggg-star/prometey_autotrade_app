@@ -44,6 +44,9 @@ export const ENV_DEFAULTS: Record<string, string> = {
   WALLET_SECRET: "",
   DEMO_START_BALANCE: "500",
   DEMO_MONTHLY_DEPOSIT: "500",
+  // Ключ доступа к API. Пусто — контур открыт (локальная разработка). Задан —
+  // все /api/* (кроме /api/health) требуют заголовок X-Api-Token.
+  API_TOKEN: "",
 };
 
 /** Прочитать .env как словарь. Некуда деться — читаем каждый раз, файл крошечный. */

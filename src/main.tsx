@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./theme.css";
 import { App } from "./App";
+import { captureTokenFromUrl } from "./lib/api";
+import { personalizeManifest, installStartUrl } from "./lib/pwa";
 
 /**
  * Точка входа — и только она.
@@ -26,6 +28,18 @@ function frame() {
 }
 frame();
 window.addEventListener("resize", frame);
+
+/**
+ * Ключ доступа и ярлык — ДО рендера.
+ *
+ * 1. Перенять ключ из `?t=` и вычистить его из адресной строки.
+ * 2. Собрать персональный манифест: стартовый адрес ярлыка обязан нести ключ,
+ *    иначе установленное на iOS приложение (у него свой localStorage) откроется
+ *    без ключа. Персонализируем сразу, а не только на Android-событии установки:
+ *    на iOS такого события нет, и «момент добавления на экран» не поймать.
+ */
+captureTokenFromUrl();
+personalizeManifest(installStartUrl());
 
 const host = document.getElementById("root");
 if (!host) throw new Error("не найден #root — проверьте index.html");

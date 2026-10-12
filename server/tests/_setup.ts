@@ -19,6 +19,12 @@ if (!process.env.ENV_PATH) process.env.ENV_PATH = join(dir, ".env");
 if (!process.env.SECRET_KEY_PATH) process.env.SECRET_KEY_PATH = join(dir, ".secret_key");
 if (!process.env.DATA_MODE) process.env.DATA_MODE = "mock";
 
+// Ключ доступа читается из окружения раньше .env. Тесты по умолчанию работают
+// на ОТКРЫТОМ контуре, поэтому гасим унаследованный из шелла API_TOKEN: иначе
+// прогон в терминале с ключом ломал бы весь набор пачкой непонятных 401. Тест
+// ключа (auth.test.ts) выставляет его сам и возвращает окружение как было.
+delete process.env.API_TOKEN;
+
 /**
  * Откатить виртуальные часы к старту мира. Нужно потому, что при запуске через
  * агрегатор все тесты делят один процесс и одни часы: разогнав их в одном тесте,
