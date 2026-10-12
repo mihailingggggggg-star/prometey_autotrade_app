@@ -19,3 +19,6 @@ import "./hardening.test.ts";
 import "./strategy.test.ts";
 import "./static.test.ts";
 import "./auth.test.ts";
+import "./live.test.ts";
+import "./jupiter.test.ts";
+import "./thresholds.test.ts";

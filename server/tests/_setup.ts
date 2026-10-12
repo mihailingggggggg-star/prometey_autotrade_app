@@ -18,6 +18,11 @@ if (!process.env.DB_PATH) process.env.DB_PATH = join(dir, "test.db");
 if (!process.env.ENV_PATH) process.env.ENV_PATH = join(dir, ".env");
 if (!process.env.SECRET_KEY_PATH) process.env.SECRET_KEY_PATH = join(dir, ".secret_key");
 if (!process.env.DATA_MODE) process.env.DATA_MODE = "mock";
+// Тесты живого контура не должны ждать реальную паузу троттлинга GeckoTerminal
+// (~30/мин = 2 с). В продакшене переменная не задана — там интервал штатный.
+if (!process.env.GECKO_INTERVAL_MS) process.env.GECKO_INTERVAL_MS = "5";
+// То же для Jupiter (пауза между запросами к вселенной): тесты не должны ждать.
+if (!process.env.JUPITER_INTERVAL_MS) process.env.JUPITER_INTERVAL_MS = "5";
 
 // Ключ доступа читается из окружения раньше .env. Тесты по умолчанию работают
 // на ОТКРЫТОМ контуре, поэтому гасим унаследованный из шелла API_TOKEN: иначе

@@ -47,6 +47,20 @@ export interface MarketData {
   range_pct: number;
   tf_accum: string;
   svd: number;
+  /** Только live: возраст пула измерить не удалось (нет даты создания) → проверка не пройдена, value=null. */
+  age_na?: boolean;
+  /** Только live: дневные свечи недоступны → коридор/просадка не измерены (value=null). */
+  candles_na?: boolean;
+  /** Только live (Jupiter): изменение ликвидности пула за 24ч, % (знак = направление). null — нет данных. */
+  liquidity_change_24h_pct?: number | null;
+  /**
+   * Только live: источник ВОЗРАСТА токена для checks. «Jupiter» — основной
+   * (источник вселенной: то же значение, что отобрал предфильтр); «DexScreener» —
+   * резерв для свежего добора, которого нет в вселенной Jupiter. undefined — не live.
+   */
+  age_source?: "Jupiter" | "DexScreener";
+  /** Только live: источник ЛИКВИДНОСТИ токена для checks (см. age_source). */
+  liq_source?: "Jupiter" | "DexScreener";
 }
 
 export interface RugData {
@@ -54,6 +68,12 @@ export interface RugData {
   burned_liq: number;
   mint_authority_revoked: boolean;
   freeze_authority_revoked: boolean;
+  /** Только live: отчёт RugCheck пометил риск уровня danger. mock не ставит. */
+  danger?: boolean;
+  /** Только live (Jupiter audit): право фриза отозвано по данным Jupiter. null — нет данных. */
+  jupiter_freeze_disabled?: boolean | null;
+  /** Только live (Jupiter audit): право минта отозвано по данным Jupiter. null — нет данных. */
+  jupiter_mint_disabled?: boolean | null;
 }
 
 export interface HolderData {
@@ -62,6 +82,23 @@ export interface HolderData {
   holders_growth_pct: number;
   makers_24h: number;
   avg_trade_usd: number;
+  /** Только live: долю топ-10 измерить не удалось (нет RPC) → проверка ok:false. */
+  top10_na?: boolean;
+  /** Только live: прирост холдеров недоступен → проверка не блокирует. */
+  holders_growth_na?: boolean;
+  /** Только live: мейкеры оценены по частичной выборке сделок. */
+  makers_partial?: boolean;
+  /** Только live (Jupiter): органичность 0..100 (0 у ярлыка «low»). null — нет данных. */
+  organic_score?: number | null;
+  /** Только live (Jupiter): ярлык органичности low/medium/high. null — нет данных. */
+  organic_label?: string | null;
+  /**
+   * Только live: ОТКУДА взята доля топ-10 (порог и подпись в checks зависят от
+   * метода). «rpc» — FluxRPC, счета пулов исключены (сравнимо с top10_max);
+   * «jupiter» — audit.topHoldersPercentage, ВКЛЮЧАЯ счёт пула (верхняя оценка,
+   * с top10_max несопоставима, сигнал по ней не блокируем). undefined — mock.
+   */
+  top10_source?: "rpc" | "jupiter" | "mock";
 }
 
 export interface SocialData {
@@ -69,6 +106,8 @@ export interface SocialData {
   is_organic: boolean;
   summary: string;
   mentions: { ts: number; source: string; title: string; url: string; score: number }[];
+  /** Только live: LLM недоступен (нет ключа) → слой не блокирует и не создаёт сигнал. */
+  llm_unavailable?: boolean;
 }
 
 export interface DataSource {
@@ -275,9 +314,9 @@ function profileFor(addr: string): Profile {
 }
 
 /** Для тестов/отладки: режим и базовые параметры токена. */
-export function mockProfile(addr: string): { mode: Mode; pumpDays: number } {
+export function mockProfile(addr: string): { mode: Mode; pumpDays: number; pumpStartDays: number } {
   const p = profileFor(addr);
-  return { mode: p.mode, pumpDays: p.pumpDays };
+  return { mode: p.mode, pumpDays: p.pumpDays, pumpStartDays: p.pumpStartDays };
 }
 
 /* ─────────────── многооктавный детерминированный шум ─────────────── */

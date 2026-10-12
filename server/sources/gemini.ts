@@ -49,7 +49,28 @@ function context(ref: SourceRef, m: MarketData): string {
 }
 
 export async function geminiOverview(ref: SourceRef, m: MarketData): Promise<string> {
-  return generate(`${PROMPT_OVERVIEW}\n\nДанные: ${context(ref, m)}`);
+  try {
+    return await generate(`${PROMPT_OVERVIEW}\n\nДанные: ${context(ref, m)}`);
+  } catch {
+    // Нет ключа или LLM недоступен — собираем осмысленное описание из ФАКТИЧЕСКИХ
+    // данных (имя, возраст, ликвидность, объём). Никаких выдумок про основателя
+    // и комьюнити: их мы не знаем.
+    return factualOverview(ref, m);
+  }
+}
+
+/** Описание проекта по фактическим данным, без LLM (когда ключа нет). */
+export function factualOverview(ref: SourceRef, m: MarketData): string {
+  const liq = Math.round(m.liq_usd).toLocaleString("ru-RU");
+  const vol = Math.round(m.volume_24h_usd).toLocaleString("ru-RU");
+  const mc = Math.round(m.mc_usd).toLocaleString("ru-RU");
+  const age = Math.round(m.age_days);
+  return (
+    `${ref.name} (${ref.symbol}) — токен сети Solana. Пул торгуется примерно ${age} дн. ` +
+    `при ликвидности ${liq} USD и капитализации ${mc} USD; объём за сутки — ${vol} USD. ` +
+    `Данные взяты из DexScreener и GeckoTerminal. Автоматическое описание без LLM: ` +
+    `сведения об основателе и комьюнити не проверены.`
+  );
 }
 
 /** Разбор ответа соцфильтра: переживает JSON внутри текста и пустой ответ. */
@@ -73,6 +94,12 @@ export function parseSocial(text: string): SocialData {
 }
 
 export async function geminiSocial(ref: SourceRef, m: MarketData): Promise<SocialData> {
-  const text = await generate(`${PROMPT_SOCIAL}\n\nДанные: ${context(ref, m)}`);
-  return parseSocial(text);
+  try {
+    const text = await generate(`${PROMPT_SOCIAL}\n\nДанные: ${context(ref, m)}`);
+    return parseSocial(text);
+  } catch {
+    // Нет ключа или LLM недоступен: помечаем слой как недоступный. Скринер по
+    // этой проверке сигнал НЕ блокирует и НЕ создаёт «на веру».
+    return { sentiment: 0, is_organic: false, summary: "", mentions: [], llm_unavailable: true };
+  }
 }

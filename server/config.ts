@@ -176,9 +176,20 @@ export function redactUrl(raw: string): string {
   return `${head}?${query}`;
 }
 
+/** Пауза перед повтором после HTTP 429: даём лимиту частоты (Gecko ~30/мин) остыть. */
+export const RETRY_429_PAUSE_MS = 3000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 /**
  * GET/POST с JSON-ответом: таймаут 10 с (AbortController), один ретрай.
  * Живёт здесь, потому что все live-источники используют ровно эту обёртку.
+ *
+ * Особый случай — HTTP 429 (превышен лимит частоты публичного API): выжидаем
+ * паузу и пробуем ещё раз, а не отдаём ошибку сразу. Иначе один троттл-ответ
+ * «уронил» бы источник, а вместе с ним — весь скан.
  */
 export async function httpJson<T = unknown>(url: string, init: RequestInit = {}): Promise<T> {
   let lastErr: unknown;
@@ -191,6 +202,12 @@ export async function httpJson<T = unknown>(url: string, init: RequestInit = {})
         signal: ctl.signal,
         headers: { accept: "application/json", ...(init.headers ?? {}) },
       });
+      if (res.status === 429 && attempt === 0) {
+        // Лимит частоты: пауза и ровно один повтор (attempt=1). Второй 429 подряд
+        // уже НЕ глотаем — отдаём ошибку, чтобы скан не висел в бесконечных паузах.
+        await sleep(RETRY_429_PAUSE_MS);
+        continue;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       return (await res.json()) as T;
     } catch (e) {

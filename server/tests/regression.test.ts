@@ -13,7 +13,7 @@ import { createServerApp } from "../index.ts";
 import { runScan } from "../screener.ts";
 import { openPosition, advance, listPositions } from "../demo.ts";
 import { setSettings, DEFAULT_SETTINGS, getDb, ensureClock, worldStart } from "../db.ts";
-import { mockPrice, mockProfile, tokenRefBySymbol } from "../sources/mock.ts";
+import { mockPrice, mockProfile, mockSymbols, tokenRefBySymbol } from "../sources/mock.ts";
 import type { Fill, Position } from "../../shared/types.ts";
 import { resetWorld } from "./_setup.ts";
 
@@ -32,24 +32,48 @@ async function getJson(url: string, init?: RequestInit): Promise<{ status: numbe
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
-test("мир движется: растущий токен проходит ≥1% за 8 виртуальных часов", () => {
+test("мир движется: растущие токены в среднем проходят ≥1% за 8 виртуальных часов", () => {
   resetWorld();
   ensureClock();
   // Дефолт тика обязан быть 360 мин (§2 плана): на медленном тике контур «стоит».
   assert.equal(DEFAULT_SETTINGS.demo.tick_minutes, 360, "дефолт tick_minutes должен быть 360");
 
   const epoch = worldStart();
-  const ref = tokenRefBySymbol("ZEPHYR");
-  assert.ok(ref, "ZEPHYR должен быть в mock-вселенной");
-  const prof = mockProfile(ref.token_addr);
-  assert.equal(prof.mode, "rising", "тестовый токен должен быть растущим");
+  assert.ok(tokenRefBySymbol("ZEPHYR"), "ZEPHYR должен быть в mock-вселенной");
 
-  // Середина разгона — максимальный наклон; тут 8ч далеко не «сотые доли процента».
-  const t0 = epoch + Math.round(prof.pumpDays * 0.5 * DAY);
-  const p0 = mockPrice(ref.token_addr, t0, epoch);
-  const p1 = mockPrice(ref.token_addr, t0 + 8 * 3600, epoch);
-  const moved = Math.abs(p1 - p0) / p0;
-  assert.ok(moved >= 0.01, `за 8 виртуальных часов цена изменилась на ${(moved * 100).toFixed(2)}%, нужно ≥1%`);
+  const rising = mockSymbols()
+    .map((sym) => tokenRefBySymbol(sym))
+    .filter((r): r is NonNullable<typeof r> => !!r && mockProfile(r.token_addr).mode === "rising");
+  assert.ok(rising.length >= 3, `в mock-вселенной слишком мало растущих токенов: ${rising.length}`);
+  assert.ok(rising.some((r) => r.symbol === "ZEPHYR"), "тестовый токен ZEPHYR должен быть растущим");
+
+  // ОДНО короткое окно легко «промахивается» из-за многооктавного шума: фрактальный
+  // шум берёт абсолютное время и на 8ч может дать локальную просадку по тренду.
+  // Поэтому берём МНОГО окон (по всем растущим токенам, из середины их разгона —
+  // там максимальный наклон) и смотрим СРЕДНИЙ ход: тренд детерминирован, шум в
+  // среднем гасится. Тест всё равно упадёт, если убрать тренд: тогда средний ход
+  // станет ~0, а доля растущих окон упадёт к половине.
+  let sum = 0;
+  let n = 0;
+  let up = 0;
+  for (const ref of rising) {
+    const prof = mockProfile(ref.token_addr);
+    for (let k = 0; k <= 5; k++) {
+      const t0 = epoch + Math.round((prof.pumpStartDays + prof.pumpDays * (0.2 + 0.6 * (k / 5))) * DAY);
+      const p0 = mockPrice(ref.token_addr, t0, epoch);
+      const p1 = mockPrice(ref.token_addr, t0 + 8 * 3600, epoch);
+      const rel = (p1 - p0) / p0;
+      sum += rel;
+      n++;
+      if (rel > 0) up++;
+    }
+  }
+  const avg = sum / n;
+  // Порог 2% (среднее по всем окнам ~8% с трендом против шумового «пола» ~0.8%)
+  // отделяет настоящий тренд от одной лишь волатильности: с убранным трендом
+  // средний ход падает к нулю, а доля растущих окон — к половине (проверено).
+  assert.ok(avg >= 0.02, `средний ход за 8 виртуальных часов ${(avg * 100).toFixed(2)}%, нужно ≥2%`);
+  assert.ok(up / n >= 0.6, `вверх шли лишь ${up}/${n} окон — похоже, тренд убран`);
 });
 
 test("движок: Free Riding целиком — 50% объёма, один алерт, net-pnl", async () => {
