@@ -157,7 +157,7 @@ test("формы ответов: /api/deposits и /api/alerts/:id/seen отда�
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
-    const scan = await getJson(`${base}/api/scan`, { method: "POST" });
+    const scan = await getJson(`${base}/api/scan?sync=1`, { method: "POST" });
     assert.ok(scan.body.ids.length >= 1);
     const opened = await getJson(`${base}/api/positions/open`, {
       method: "POST",

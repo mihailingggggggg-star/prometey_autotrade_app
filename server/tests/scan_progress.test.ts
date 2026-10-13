@@ -63,7 +63,7 @@ test("прогресс: GET /api/scan/status отдаёт JSON с running и и�
     assert.equal(before.running, false, "эндпоинт живёт и до скана");
     assert.ok("stage" in before && "by_layer" in before && "last_note" in before, "поля визуализатора на месте");
 
-    await fetch(`${base}/api/scan`, { method: "POST" });
+    await fetch(`${base}/api/scan?sync=1`, { method: "POST" });
     const after = (await (await fetch(`${base}/api/scan/status`)).json()) as Record<string, unknown>;
     assert.equal(after.running, false);
     assert.equal(after.stage, "завершено");

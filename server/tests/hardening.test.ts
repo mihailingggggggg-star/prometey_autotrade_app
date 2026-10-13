@@ -363,7 +363,7 @@ test("open с tp_percent=null берёт дефолт и не даёт мгно�
   resetWorld();
   setSettings(DEFAULT_SETTINGS);
   await withServer(async (base) => {
-    const scan = await getJson(`${base}/api/scan`, { method: "POST" });
+    const scan = await getJson(`${base}/api/scan?sync=1`, { method: "POST" });
     const opened = await getJson(`${base}/api/positions/open`, {
       method: "POST",
       headers: JSON_HEADERS,

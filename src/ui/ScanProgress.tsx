@@ -11,9 +11,12 @@
  * неопределённая), а не выдуманные числа. По завершении показываем итог и
  * причину, если сигналов ноль.
  *
- * Сам запрос POST /api/scan уходит отсюда же: сервер однопоточный, поэтому при
- * уже идущем скане он просто дождётся его и вернёт тот же итог. По завершении
- * зовём onDone — лента на Главной перечитывается.
+ * Запуск POST /api/scan больше НЕ ждёт окончания: сервер уводит скан в фон и
+ * отвечает сразу (202), а мы опрашиваем статус до running:false. Долгого
+ * запроса нет — значит, обрыв связи на телефоне (блокировка экрана) не выглядит
+ * как «сервер не отвечает». Ошибкой считаем только реальный отказ запуска
+ * (HTTP 4xx/5xx или сеть), а не длительность ожидания. По завершении берём итог
+ * из last_result и зовём onDone — лента на Главной перечитывается.
  */
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
@@ -57,6 +60,10 @@ export function ScanProgress({ open, onClose, onDone }: {
   useEffect(() => {
     if (!open) return;
     let stopped = false;
+    // Итог последнего скана показываем ровно один раз: onDone перечитывает ленту,
+    // и повторные вызовы на каждом тике ей не нужны.
+    let doneFired = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     setErr(null);
     setSt(null);
     setResolved(false);
@@ -64,22 +71,33 @@ export function ScanProgress({ open, onClose, onDone }: {
     const tick = async () => {
       try {
         const s = await scanStatus();
-        if (!stopped) setSt(s);
+        if (stopped) return;
+        setSt(s);
+        // Завершение: скан был запущен (или уже шёл) и перестал быть running.
+        // last_result в этот момент уже заполнен сервером.
+        if (!s.running && !doneFired) {
+          doneFired = true;
+          setResolved(true);
+          onDone();
+        }
       } catch (e) {
         if (!stopped) setErr(msg(e));
       }
     };
-    void tick();
-    const timer = setInterval(() => void tick(), 2000);
 
-    // Запуск скана. onDone зовём даже если наложение уже закрыли: лента обязана
-    // обновиться, когда поиск закончится, независимо от того, смотрит ли человек
-    // на прогресс.
+    // Запуск. Отвечает сразу — ждать нечего. Опрос статуса начинаем только после
+    // успешного запуска: иначе первый тик мог бы прочитать итог ПРОШЛОГО скана и
+    // показать «завершено» до того, как новый проход вообще начался.
+    // onDone зовём даже если наложение уже закрыли — лента обязана обновиться.
     scan()
-      .then(() => { setResolved(true); onDone(); })
-      .catch((e) => setErr(msg(e)));
+      .then(() => {
+        if (stopped) return;
+        void tick();
+        timer = setInterval(() => void tick(), 2000);
+      })
+      .catch((e) => { if (!stopped) setErr(msg(e)); });
 
-    return () => { stopped = true; clearInterval(timer); };
+    return () => { stopped = true; if (timer) clearInterval(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -89,6 +107,9 @@ export function ScanProgress({ open, onClose, onDone }: {
   // Процент — только когда известны кандидаты. Иначе честная неопределённая полоса.
   const pct = total > 0 && st ? Math.round((doneN / total) * 100) : null;
   const done = resolved && st !== null && !st.running;
+  // Найдено берём из итога последнего скана (last_result) — это тот же ScanResult,
+  // что раньше приходил в синхронном ответе; счётчик на случай его отсутствия.
+  const found = st?.last_result?.found ?? st?.signals_found ?? 0;
   const layers = st
     ? Object.entries(st.by_layer)
         .filter(([k, v]) => k in LAYER_LABELS && typeof v === "number" && v > 0)
@@ -96,7 +117,7 @@ export function ScanProgress({ open, onClose, onDone }: {
     : [];
 
   const heading = err && !st
-    ? "Не удалось получить прогресс"
+    ? "Не удалось запустить поиск"
     : st
       ? st.stage
       : "запускаю скан…";
@@ -154,11 +175,11 @@ export function ScanProgress({ open, onClose, onDone }: {
         {done && (
           <div className="mt-4">
             <p className="text-[15px] leading-snug">
-              {st && st.signals_found > 0
-                ? `Найдено ${st.signals_found}, проверено ${st.candidates_done} кандидатов.`
+              {found > 0
+                ? `Найдено ${found}, проверено ${st?.candidates_done ?? 0} кандидатов.`
                 : `Сигналов нет: проверено ${st?.candidates_done ?? 0} кандидатов.`}
             </p>
-            {st && st.signals_found === 0 && (
+            {found === 0 && (
               <p className="text-[13px] mt-1 leading-snug" style={{ color: "var(--label-2)" }}>
                 {layers.length > 0
                   ? `Больше всего срезал слой «${LAYER_LABELS[layers[0][0]]}» — ${layers[0][1]} монет.`

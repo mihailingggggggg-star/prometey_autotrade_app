@@ -40,7 +40,7 @@ import {
   audit,
   type SignalRow,
 } from "./db.ts";
-import { runScan, getScanStatus } from "./screener.ts";
+import { runScan, startScan, getScanStatus } from "./screener.ts";
 import {
   openPosition,
   addToPosition,
@@ -66,7 +66,6 @@ import type {
   Indicators,
   Social,
   ChartTf,
-  ScanResult,
   KeysUpdate,
   SettingsPatch,
   Settings,
@@ -132,6 +131,20 @@ function signalDetail(row: SignalRow): SignalDetail {
 }
 
 /* ─────────────── HTTP-утилиты ─────────────── */
+
+/**
+ * Ответ со статусом, отличным от 200. Роутер по умолчанию отдаёт 200; этот
+ * обёртка позволяет, например, POST /api/scan ответить 202 Accepted (скан ушёл
+ * в фон), не меняя сигнатуру всех остальных обработчиков.
+ */
+class HttpReply {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown) {
+    this.status = status;
+    this.body = body;
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -385,7 +398,16 @@ const routes: Route[] = [
   {
     method: "POST",
     pattern: "/api/scan",
-    handler: async (): Promise<ScanResult> => runScan(),
+    // По умолчанию — асинхронный запуск: скан уходит в фон, отвечаем сразу
+    // 202 {"started","running"}. Долгой HTTP-связи нет, поэтому обрыв запроса
+    // на телефоне (блокировка экрана) больше не выглядит как «сервер не
+    // отвечает». Итог клиент забирает из GET /api/scan/status (last_result).
+    // ?sync=1 — прежнее поведение для CLI/скриптов/мониторинга: ждём скан и
+    // отдаём ScanResult (200).
+    handler: ({ url }) => {
+      if (url.searchParams.get("sync") === "1") return runScan();
+      return new HttpReply(202, startScan());
+    },
   },
   {
     method: "GET",
@@ -602,6 +624,11 @@ async function handle(
         const params = matchPath(route.pattern, url.pathname);
         if (!params) continue;
         const result = await route.handler({ params, url, body });
+        // Обработчик может попросить нестандартный статус (202 у фонового скана).
+        if (result instanceof HttpReply) {
+          sendJson(res, result.status, result.body);
+          return;
+        }
         sendJson(res, 200, result ?? { ok: true });
         return;
       }

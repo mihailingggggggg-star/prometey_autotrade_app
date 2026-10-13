@@ -28,7 +28,8 @@ test("роуты: health, scan, signals и покупка/закрытие по�
     assert.equal(health.body.ok, true);
     assert.equal(health.body.mode, "mock");
 
-    const scan = await getJson(`${base}/api/scan`, { method: "POST" });
+    // ?sync=1 — прежнее синхронное поведение: ждём скан и получаем ScanResult.
+    const scan = await getJson(`${base}/api/scan?sync=1`, { method: "POST" });
     assert.equal(scan.status, 200);
     assert.ok(scan.body.found >= 1, "скан должен найти сигналы");
     const signalId = scan.body.ids[0];

@@ -14,7 +14,7 @@
 import type {Health, Signal, SignalDetail, SignalStatus, ScanResult, Candle, ChartTf,
   Position, PositionStatus, Trade, AnalyticsSummary, Settings, SettingsPatch,
   KeysStatus, KeysUpdate, Alert, AuditEntry, OpenPositionRequest, Fill,
-  ApiErrorBody, ScanStatus } from "../../shared/types";
+  ApiErrorBody, ScanStatus, ScanStart } from "../../shared/types";
 
 /** Базовый адрес API: ключ `solana.api` из localStorage либо тот же origin. */
 export function apiBase(): string {
@@ -169,7 +169,13 @@ export const listSignals = (opts: { limit?: number; status?: SignalStatus } = {}
 
 export const getSignal = (id: number) => call<SignalDetail>(`/api/signals/${id}`);
 
-export const scan = () => call<ScanResult>("/api/scan", { method: "POST" });
+/**
+ * Ответ на запуск скана. POST /api/scan больше НЕ ждёт окончания: сервер уводит
+ * скан в фон и отвечает сразу 202 — `started=true`, если скан стартовал этим
+ * вызовом; `started=false, running=true`, если скан уже шёл (второй не
+ * запускается). Итог забираем из GET /api/scan/status (поле `last_result`).
+ */
+export const scan = () => call<ScanStart>("/api/scan", { method: "POST" });
 
 /* ── прогресс скана ── */
 
@@ -180,7 +186,7 @@ export const scan = () => call<ScanResult>("/api/scan", { method: "POST" });
  */
 /* Тип живёт в общем контракте (shared/types.ts), здесь — только реэкспорт:
    экраны импортируют его из клиента и не знают про внутреннее расположение. */
-export type { ScanStatus } from "../../shared/types";
+export type { ScanStatus, ScanStart } from "../../shared/types";
 
 export const scanStatus = () => call<ScanStatus>("/api/scan/status");
 

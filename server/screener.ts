@@ -487,6 +487,13 @@ export interface ScanStatus {
   elapsed_ms: number;
   /** Последняя строка о том, что происходит (например «MINI: проверяю накопление»). */
   last_note: string;
+  /** Момент завершения последнего скана, сек UTC (0 — ещё ни один не завершался). */
+  finished_ts: number;
+  /**
+   * Итог последнего ПРОШЕДШЕГО скана — то же, что раньше отдавал синхронный
+   * POST /api/scan. Клиент забирает его из статуса, не держа долгую HTTP-связь.
+   */
+  last_result: ScanResult | null;
 }
 
 interface ScanState extends ScanStatus {
@@ -507,6 +514,8 @@ const scanState: ScanState = {
   budget_total: MAX_SCAN_REQUESTS,
   elapsed_ms: 0,
   last_note: "",
+  finished_ts: 0,
+  last_result: null,
 };
 
 /** Снимок состояния скана для /api/scan/status. elapsed и бюджет — живые. */
@@ -523,6 +532,10 @@ export function getScanStatus(): ScanStatus {
     budget_total: scanState.budget_total,
     elapsed_ms: scanState.running ? Date.now() - scanState.started_ms : scanState.elapsed_ms,
     last_note: scanState.last_note,
+    finished_ts: scanState.finished_ts,
+    // Копию не делаем: last_result формируется один раз в конце скана и после
+    // этого не мутируется — клиенту уходит как есть.
+    last_result: scanState.last_result,
   };
 }
 
@@ -580,6 +593,29 @@ export async function runScan(): Promise<ScanResult> {
   } finally {
     scanInFlight = null;
   }
+}
+
+export interface ScanStart {
+  /** true — скан стартовал этим вызовом; false — уже шёл, второй не запускали. */
+  started: boolean;
+  running: boolean;
+}
+
+/**
+ * Запустить скан и НЕ ждать его окончания. Возвращается сразу: `started=true`,
+ * если скан стартовал этим вызовом; `started=false, running=true`, если скан уже
+ * идёт (второй проход не запускается — тот же scanInFlight). Нужно для
+ * POST /api/scan: браузер телефона обрывает долгий HTTP-ответ (особенно при
+ * блокировке экрана), поэтому связь не держим, а итог клиент забирает из
+ * GET /api/scan/status. Ошибку фонового скана глушим — процесс не должен падать,
+ * состояние закроет failScanState внутри runScan.
+ */
+export function startScan(): ScanStart {
+  if (scanInFlight) return { started: false, running: true };
+  // runScan выставляет scanInFlight и состояние СИНХРОННО (до первого await),
+  // поэтому повторный вызов сразу видит идущий скан и не запускает второй.
+  void runScan().catch(() => {});
+  return { started: true, running: true };
 }
 
 async function runScanOnce(): Promise<ScanResult> {
@@ -676,7 +712,12 @@ async function runScanOnce(): Promise<ScanResult> {
   // видна снаружи, без чтения логов.
   const rejectedOut = { ...rejected, by_check: byCheck } as unknown as Record<string, number>;
   audit("scan", { found: ids.length, rejected: rejectedOut, requests: requestCount(), ms: Date.now() - startedAt }, "screener");
-  return { found: ids.length, ids, rejected_by_layer: rejectedOut };
+  const result: ScanResult = { found: ids.length, ids, rejected_by_layer: rejectedOut };
+  // Итог последнего скана доступен из GET /api/scan/status без ожидания —
+  // клиент показывает «найдено/проверено» и обновляет ленту, не держа связь.
+  scanState.finished_ts = nowSec();
+  scanState.last_result = result;
+  return result;
 }
 
 function insertSignal(ref: SourceRef, res: ScreenResult, now: number): number {

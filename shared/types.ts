@@ -132,6 +132,20 @@ export interface ScanStatus {
   elapsed_ms: number;
   /** Последнее, что происходило: «MINI: проверяю накопление». */
   last_note: string;
+  /** Секунда UTC завершения последнего скана; 0 — ещё ни один не завершался. */
+  finished_ts: number;
+  /** Итог последнего завершённого скана: ленте нужно знать, что искать нечего зря. */
+  last_result: ScanResult | null;
+}
+
+/**
+ * Ответ на запуск поиска. Запуск асинхронный: длинный HTTP-запрос обрывался
+ * браузером на телефоне, и человек видел «сервер не отвечает» посреди работы.
+ */
+export interface ScanStart {
+  /** true — скан начат этим вызовом; false — уже шёл. */
+  started: boolean;
+  running: boolean;
 }
 
 export interface ScanResult {
