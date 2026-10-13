@@ -79,7 +79,7 @@ export function Positions({ refreshKey, onOpen }: {
           </div>
           <div className="text-[18px] font-bold">Открытых позиций нет</div>
           <p className="text-[14px] mt-1.5" style={{ color: "var(--label-2)" }}>
-            Откройте сделку на вкладке «Сигналы» — она появится здесь, и её
+            Откройте сделку из ленты сигналов на Главной — она появится здесь, и её
             можно будет вести: двигать ТП, докупать и закрывать.
           </p>
         </div>

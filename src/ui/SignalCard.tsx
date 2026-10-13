@@ -1,11 +1,10 @@
 /**
  * Карточка сигнала — одна монета в ленте.
  *
- * Вынесена из ленты (screens/Feed) в общий примитив, потому что лента теперь
- * живёт в ДВУХ местах: на Главной (ниже карточки результата и быстрых действий)
- * и на вкладке «Сигналы». Две копии одной разметки неизбежно разошлись бы, а
- * карточка обязана выглядеть ОДИНАКОВО в обоих местах — поэтому разметка
- * перенесена как есть, без перерисовки.
+ * Вынесена из ленты (бывший экран screens/Feed) в общий примитив: отдельной
+ * вкладки «Сигналы» больше нет, вся лента живёт на Главной. Карточка остаётся
+ * самостоятельным компонентом — её можно показать где угодно, не таща за собой
+ * экран, — и обязана выглядеть одинаково везде.
  *
  * Карточка отвечает на три вопроса сразу: ЧТО нашли (тикер, имя, цена), ПОЧЕМУ
  * оно здесь (плашка фазы накопления) и НАСКОЛЬКО это сильное (скоринг, сентимент)
@@ -24,10 +23,13 @@ import type { CoinRef } from "../screens/CoinDetail";
 
 export function SignalCard({ s, onOpen }: {
   s: Signal;
-  /** Клик по карточке открывает детальный экран монеты, как на вкладке «Сигналы». */
+  /** Клик по карточке открывает детальный экран монеты (карточка → график). */
   onOpen?: (ref: CoinRef) => void;
 }) {
   const organic = s.is_organic;
+  // Медиа оценено только тогда, когда есть сентимент: при выключенном фильтре
+  // сервер отдаёт ноль, и это не оценка.
+  const mediaChecked = s.sentiment > 0;
   return (
     <Press
       onClick={() => onOpen?.({
@@ -48,16 +50,26 @@ export function SignalCard({ s, onOpen }: {
           </div>
         </div>
 
-        {/* ПОЧЕМУ оно здесь: плашка фазы и, если нужно, отметка «не органика». */}
+        {/* ПОЧЕМУ оно здесь: плашка фазы и отметка о медиа.
+            Важно: пока фильтр по новостям выключен, сервер отдаёт sentiment 0 и
+            is_organic=false — это ОТСУТСТВИЕ оценки, а не плохая оценка. Писать
+            «не органика» по нулю значит обвинять монету в том, чего мы не
+            проверяли; поэтому показываем отдельную нейтральную плашку. */}
         <div className="px-4 pb-1 flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] px-1.5 py-0.5 rounded-md font-semibold"
                 style={{ background: "color-mix(in srgb, var(--green) 16%, transparent)", color: "var(--green)" }}>
             {s.status_label || "Фаза накопления подтверждена"}
           </span>
-          {!organic && (
+          {mediaChecked && !organic && (
             <span className="text-[11px] px-1.5 py-0.5 rounded-md font-medium"
                   style={{ background: "color-mix(in srgb, var(--orange) 14%, transparent)", color: "var(--orange)" }}>
               не органика
+            </span>
+          )}
+          {!mediaChecked && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded-md font-medium"
+                  style={{ background: "color-mix(in srgb, var(--label-3) 14%, transparent)", color: "var(--label-3)" }}>
+              медиа не проверялось
             </span>
           )}
         </div>
@@ -68,8 +80,8 @@ export function SignalCard({ s, onOpen }: {
                right={<span className="tabular-nums font-semibold" style={{ color: "var(--label)" }}>{s.score}</span>} />
           <Row title="Сентимент"
                right={<span className="tabular-nums"
-                             style={{ color: s.sentiment >= 6 ? "var(--green)" : "var(--orange)" }}>
-                 {s.sentiment}/10
+                             style={{ color: !mediaChecked ? "var(--label-3)" : s.sentiment >= 6 ? "var(--green)" : "var(--orange)" }}>
+                 {mediaChecked ? `${s.sentiment}/10` : "—"}
                </span>} />
           <Row last title="Таймфрейм" right={s.tf_accum} />
         </div>

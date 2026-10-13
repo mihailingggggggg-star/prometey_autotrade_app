@@ -11,12 +11,13 @@ import "./_setup.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cacheClear, netJson, requestCount } from "../sources/net.ts";
-import { dexMarket, setRangeDays } from "../sources/dexscreener.ts";
+import { dexCandles, dexMarket, setRangeDays } from "../sources/dexscreener.ts";
 import { ohlcv } from "../sources/geckoterminal.ts";
 import { rug } from "../sources/rugcheck.ts";
 import { holders } from "../sources/helius.ts";
 import { runScan, MAX_SCAN_REQUESTS } from "../screener.ts";
 import { setSettings, DEFAULT_SETTINGS, getDb } from "../db.ts";
+import type { SourceRef } from "../sources/mock.ts";
 import { RETRY_429_PAUSE_MS } from "../config.ts";
 
 const realFetch = globalThis.fetch;
@@ -678,4 +679,120 @@ test("live: нет дневных свечей — слой 4 не отбрак�
   });
   process.env.DATA_MODE = "mock";
   setSettings(DEFAULT_SETTINGS);
+});
+
+/* ─────────── свечи: запасной пул, 429, кэш TTL, честная пустота ─────────── */
+
+/** Пул GeckoTerminal в форме ответа tokens/{mint}/pools. */
+function geckoPool(addr: string, mint: string, liq: number, symbol = "TKN") {
+  return {
+    attributes: { address: addr, name: `${symbol} / SOL`, reserve_in_usd: String(liq), volume_usd: { h24: "1000" } },
+    relationships: { base_token: { data: { id: `solana_${mint}` } } },
+  };
+}
+
+const candleRef = (mint: string): SourceRef => ({ token_addr: mint, pair_addr: "", symbol: "TKN", name: "Tkn" });
+const emptyOhlcv = { data: { attributes: { ohlcv_list: [] } } };
+const oneCandle = { data: { attributes: { ohlcv_list: [[100, 1, 2, 0.5, 1.5, 10]] } } };
+
+test("live: свечи — пул пары пуст, берём самый ликвидный пул из tokens/{mint}/pools", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  const mint = "FALLBACKmint00000000000000000000000000000";
+  const seen: string[] = [];
+  await withFetch(
+    (url) => {
+      if (url.includes("/latest/dex/tokens/"))
+        return jsonResp({
+          pairs: [{ chainId: "solana", pairAddress: "POOL_PRIMARY", baseToken: { address: mint }, liquidity: { usd: 900 } }],
+        });
+      if (url.includes("/tokens/") && url.includes("/pools"))
+        return jsonResp({ data: [geckoPool("POOL_LOW", mint, 1_000), geckoPool("POOL_HIGH", mint, 50_000)] });
+      if (url.includes("/ohlcv/")) {
+        const pool = url.split("/pools/")[1].split("/ohlcv/")[0];
+        seen.push(pool);
+        return jsonResp(pool === "POOL_HIGH" ? oneCandle : emptyOhlcv);
+      }
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async () => {
+      const c = await dexCandles(candleRef(mint), "1h", 200);
+      assert.equal(c.length, 1, "свечи должны прийти из запасного пула");
+      assert.deepEqual(seen, ["POOL_PRIMARY", "POOL_HIGH"], "запасной путь берёт САМЫЙ ликвидный пул, а не первый");
+    },
+  );
+  process.env.DATA_MODE = "mock";
+});
+
+test("live: свечи — 429 на первом запросе Gecko → повтор и успех", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  const mint = "RETRYmint000000000000000000000000000000";
+  let ohlcvCalls = 0;
+  await withFetch(
+    (url) => {
+      if (url.includes("/latest/dex/tokens/"))
+        return jsonResp({
+          pairs: [{ chainId: "solana", pairAddress: "POOL_R", baseToken: { address: mint }, liquidity: { usd: 900 } }],
+        });
+      if (url.includes("/ohlcv/")) {
+        ohlcvCalls++;
+        if (ohlcvCalls === 1) return jsonResp({ error: "rate limited" }, 429);
+        return jsonResp(oneCandle);
+      }
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async () => {
+      const c = await dexCandles(candleRef(mint), "1h", 200);
+      assert.equal(c.length, 1, "после повтора свечи получены");
+      assert.ok(ohlcvCalls >= 2, "после 429 должен быть повторный запрос");
+    },
+  );
+  process.env.DATA_MODE = "mock";
+});
+
+test("live: свечи — второй запрос в пределах TTL не идёт в сеть", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  const mint = "CACHEmint000000000000000000000000000000";
+  await withFetch(
+    (url) => {
+      if (url.includes("/latest/dex/tokens/"))
+        return jsonResp({
+          pairs: [{ chainId: "solana", pairAddress: "POOL_C", baseToken: { address: mint }, liquidity: { usd: 900 } }],
+        });
+      if (url.includes("/ohlcv/")) return jsonResp(oneCandle);
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async (ctx) => {
+      await dexCandles(candleRef(mint), "1h", 200);
+      const after = ctx.calls();
+      const c = await dexCandles(candleRef(mint), "1h", 200);
+      assert.equal(c.length, 1);
+      assert.equal(ctx.calls(), after, "повтор в пределах TTL не должен идти в сеть");
+    },
+  );
+  process.env.DATA_MODE = "mock";
+});
+
+test("live: свечи — пустой ответ обоих путей → [] без исключения", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  const mint = "EMPTYmint0000000000000000000000000000000";
+  await withFetch(
+    (url) => {
+      if (url.includes("/latest/dex/tokens/"))
+        return jsonResp({
+          pairs: [{ chainId: "solana", pairAddress: "POOL_E", baseToken: { address: mint }, liquidity: { usd: 900 } }],
+        });
+      if (url.includes("/tokens/") && url.includes("/pools")) return jsonResp({ data: [geckoPool("POOL_X", mint, 1_000)] });
+      if (url.includes("/ohlcv/")) return jsonResp(emptyOhlcv);
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async () => {
+      const c = await dexCandles(candleRef(mint), "1d", 200);
+      assert.deepEqual(c, [], "нет данных — честный пустой массив, без синтетики");
+    },
+  );
+  process.env.DATA_MODE = "mock";
 });

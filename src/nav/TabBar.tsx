@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { animate, motion, useMotionTemplate, useMotionValue, useTransform } from "motion/react";
-import { LayoutGrid, LineChart, Radar, UserRound, Wallet, type LucideIcon } from "lucide-react";
+import { LayoutGrid, LineChart, UserRound, Wallet, type LucideIcon } from "lucide-react";
 import { haptic } from "../lib/haptics";
 import { useLensSquash } from "../ui/liquid";
 
-export type Tab = "home" | "signals" | "positions" | "analytics" | "profile";
+export type Tab = "home" | "positions" | "analytics" | "profile";
 
 /** Порядок вкладок — ОДИН на панель и на свайп: если бы свайп листал в другом
  *  порядке, жест ощущался бы случайным. */
-export const TABS_ORDER: Tab[] = ["home", "signals", "positions", "analytics", "profile"];
+export const TABS_ORDER: Tab[] = ["home", "positions", "analytics", "profile"];
 
 const TABS: { id: Tab; label: string; Icon: LucideIcon }[] = [
   { id: "home", label: "Главная", Icon: LayoutGrid },
-  { id: "signals", label: "Сигналы", Icon: Radar },
   { id: "positions", label: "Позиции", Icon: Wallet },
   { id: "analytics", label: "Аналитика", Icon: LineChart },
   { id: "profile", label: "Профиль", Icon: UserRound },

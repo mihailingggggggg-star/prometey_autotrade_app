@@ -186,8 +186,14 @@ export function redactUrl(raw: string): string {
   return `${head}?${query}`;
 }
 
-/** Пауза перед повтором после HTTP 429: даём лимиту частоты (Gecko ~30/мин) остыть. */
+/** Базовая пауза перед повтором после HTTP 429: даём лимиту частоты (Gecko ~30/мин) остыть. */
 export const RETRY_429_PAUSE_MS = 3000;
+/**
+ * Сколько раз повторяем запрос после HTTP 429 (сверх первой попытки). Пауза
+ * НАРАСТАЁТ кратно номеру повтора (3 с, затем 6 с) — частый троттл-ответ
+ * публичного API разъезжается во времени, и второй повтор успевает пройти.
+ */
+export const RETRY_429_MAX = 2;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -198,32 +204,46 @@ function sleep(ms: number): Promise<void> {
  * Живёт здесь, потому что все live-источники используют ровно эту обёртку.
  *
  * Особый случай — HTTP 429 (превышен лимит частоты публичного API): выжидаем
- * паузу и пробуем ещё раз, а не отдаём ошибку сразу. Иначе один троттл-ответ
- * «уронил» бы источник, а вместе с ним — весь скан.
+ * НАРАСТАЮЩУЮ паузу и пробуем ещё раз (до RETRY_429_MAX повторов), а не отдаём
+ * ошибку сразу. Иначе один троттл-ответ «уронил» бы источник, а вместе с ним —
+ * весь скан (в свечах это выглядело бы как «нет данных» на отдельном ТФ).
  */
 export async function httpJson<T = unknown>(url: string, init: RequestInit = {}): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let retries429 = 0; // повторы после HTTP 429 (нарастающая пауза)
+  let retriedErr = false; // один повтор на прочие ошибки (таймаут/сеть)
+  for (;;) {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 10_000);
+    let rateLimited = false;
     try {
       const res = await fetch(url, {
         ...init,
         signal: ctl.signal,
         headers: { accept: "application/json", ...(init.headers ?? {}) },
       });
-      if (res.status === 429 && attempt === 0) {
-        // Лимит частоты: пауза и ровно один повтор (attempt=1). Второй 429 подряд
-        // уже НЕ глотаем — отдаём ошибку, чтобы скан не висел в бесконечных паузах.
-        await sleep(RETRY_429_PAUSE_MS);
-        continue;
+      if (res.status === 429) {
+        if (retries429 < RETRY_429_MAX) {
+          // Лимит частоты: выжидаем с НАРАСТАЮЩЕЙ паузой (3 с, затем 6 с) и повторяем.
+          await sleep(RETRY_429_PAUSE_MS * (retries429 + 1));
+          retries429++;
+          continue;
+        }
+        // Повторы исчерпаны — отдаём ошибку и НЕ делаем для неё «прочий» повтор.
+        rateLimited = true;
+        throw new Error(`HTTP 429 ${res.statusText}`);
       }
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       return (await res.json()) as T;
     } catch (e) {
       lastErr = e;
       // Таймаут абортнулся — повторим один раз; прочие ошибки тоже ретраим,
-      // но не более одного раза, чтобы скан не висел.
+      // но не более одного раза, чтобы скан не висел. Для 429 повтор уже свой.
+      if (!rateLimited && !retriedErr) {
+        retriedErr = true;
+        continue;
+      }
+      break;
     } finally {
       clearTimeout(timer);
     }

@@ -31,7 +31,7 @@
 import { netJson } from "./net.ts";
 import { metaGet, metaSet } from "../db.ts";
 import { ApiError } from "../config.ts";
-import { ohlcv, poolsForToken, newPools, trendingPools, topVolumePools, type GeckoPoolInfo } from "./geckoterminal.ts";
+import { ohlcv, bestPoolForToken, newPools, trendingPools, topVolumePools, type GeckoPoolInfo } from "./geckoterminal.ts";
 import { jupiterUniverse, jupiterToken, type JupiterToken } from "./jupiter.ts";
 import type { Candle, ChartTf, ScreenerSettings } from "../../shared/types.ts";
 import type { SourceRef, MarketData } from "./mock.ts";
@@ -575,11 +575,62 @@ async function dailySeries(pool: string): Promise<Candle[]> {
   return daily;
 }
 
-/** Ряд дневных свечей пула (для слоя 4). Пул не найден — пустой ряд. */
+/**
+ * Пул свечей с запасным путём. Сначала пул лучшей пары DexScreener (её адрес =
+ * адрес пула GeckoTerminal). Если оттуда свечей нет (часть монет Gecko в таком
+ * виде не отдаёт) — ищем самый ликвидный пул токена через GeckoTerminal
+ * `/networks/solana/tokens/{mint}/pools` и читаем уже по нему.
+ *
+ * Запасной пул ищется ТОЛЬКО когда основной не дал свечей: иначе лишний запрос
+ * к Gecko на каждый вызов приблизил бы лимит (~30/мин) и породил бы 429.
+ */
+async function candlesViaPools(
+  ref: SourceRef,
+  label: string,
+  load: (pool: string) => Promise<Candle[]>,
+): Promise<Candle[]> {
+  const tried: string[] = [];
+  const primary = await poolForToken(ref.token_addr);
+  if (primary) {
+    tried.push(primary);
+    const c = await safeLoad(() => load(primary));
+    if (c.length) return c;
+  }
+  const alt = await safeBestPool(ref.token_addr);
+  if (alt && alt !== primary) {
+    tried.push(alt);
+    const c = await safeLoad(() => load(alt));
+    if (c.length) return c;
+  }
+  // Оба пути пусты — честная пустота, но одна строка с причиной в лог (без ключей).
+  console.error(
+    `[свечи] нет данных (${label}): ${ref.symbol} (${ref.token_addr}); пулы: ${tried.join(", ") || "не найдены"}`,
+  );
+  return [];
+}
+
+/** Выполнить загрузку свечей, любым сбоем отдав пустой ряд (не роняем путь). */
+async function safeLoad(fn: () => Promise<Candle[]>): Promise<Candle[]> {
+  try {
+    return await fn();
+  } catch {
+    return [];
+  }
+}
+
+/** Адрес самого ликвидного пула через Gecko; сбой/пустота → null. */
+async function safeBestPool(mint: string): Promise<string | null> {
+  try {
+    const best = await bestPoolForToken(mint);
+    return best?.pool ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ряд дневных свечей токена (для слоя 4). Оба пула пусты — пустой ряд. */
 export async function dexDailyCandles(ref: SourceRef): Promise<Candle[]> {
-  const pool = await poolForToken(ref.token_addr);
-  if (!pool) return [];
-  return dailySeries(pool);
+  return candlesViaPools(ref, "1d", (pool) => dailySeries(pool));
 }
 
 /** Итог слоя 4: коридор и просадка. candles_na — ряд измерить не удалось. */
@@ -680,22 +731,11 @@ export async function dexMarket(ref: SourceRef): Promise<MarketData> {
   };
 }
 
-/** Свечи для /api/candles: OHLCV GeckoTerminal по самому ликвидному пулу. */
+/**
+ * Свечи для /api/candles: OHLCV GeckoTerminal по пулу лучшей пары DexScreener,
+ * при пустом ответе — по самому ликвидному пулу токена (запасной путь). Формат
+ * ответа не меняем: Candle = [ts,o,h,l,c,v], от старых к новым.
+ */
 export async function dexCandles(ref: SourceRef, tf: ChartTf, limit: number): Promise<Candle[]> {
-  let pool = await poolForToken(ref.token_addr);
-  if (!pool) {
-    // В кэше пула нет — спросим GeckoTerminal напрямую.
-    try {
-      const best = await poolsForToken(ref.token_addr);
-      pool = best.length ? best.reduce((a, b) => (b.liq_usd > a.liq_usd ? b : a)).pool : null;
-    } catch {
-      pool = null;
-    }
-  }
-  if (!pool) return []; // честная пустота вместо выдуманного ряда
-  try {
-    return await ohlcv(pool, tf, limit);
-  } catch {
-    return [];
-  }
+  return candlesViaPools(ref, tf, (pool) => ohlcv(pool, tf, limit));
 }

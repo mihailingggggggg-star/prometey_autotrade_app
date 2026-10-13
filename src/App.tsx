@@ -1,17 +1,17 @@
 /**
- * Каркас демо-приложения: пять вкладок, экраны и глобальное состояние связи.
+ * Каркас демо-приложения: четыре вкладки, экраны и глобальное состояние связи.
  *
- * Пять вкладок — как было в прежнем приложении: «Главная», «Сигналы»,
- * «Позиции», «Аналитика», «Профиль». Панель снизу — прежняя, с линзой
- * (nav/TabBar, порт _UILiquidLensView из iOS 26).
+ * Четыре вкладки — «Главная», «Позиции», «Аналитика», «Профиль». Отдельной
+ * вкладки «Сигналы» больше нет: вся лента скринера живёт на Главной. Панель
+ * снизу — прежняя, с линзой (nav/TabBar, порт _UILiquidLensView из iOS 26).
  *
  * Одна ошибка на всё приложение живёт здесь: если сервер не отвечает, человек
  * видит это сразу наверху, независимо от того, на какой вкладке находится.
  * Кнопка «Обновить» поднимает общий счётчик обновления — экраны перечитывают
  * данные немедленно, не дожидаясь своего интервала опроса.
  *
- * Детальный экран монеты — наложение ПОВЕРХ всего, а не шестая вкладка: он
- * открывается и из «Сигналов», и из «Позиций», и при возврате человек должен
+ * Детальный экран монеты — наложение ПОВЕРХ всего, а не отдельная вкладка: он
+ * открывается и с Главной, и из «Позиций», и при возврате человек должен
  * попасть туда, откуда пришёл. Полноэкранный график — ещё один слой поверх
  * карточки (screens/ChartScreen).
  *
@@ -28,7 +28,6 @@ import { TabBar, type Tab } from "./nav/TabBar";
 import { Press, SPRING } from "./ui/kit";
 import { Boom } from "./ui/Boom";
 import { Home } from "./screens/Home";
-import { Feed } from "./screens/Feed";
 import { Positions } from "./screens/Positions";
 import { Analytics } from "./screens/Analytics";
 import { Profile } from "./screens/Profile";
@@ -110,10 +109,8 @@ export function App() {
         <main className="scroll relative z-10 flex-1 min-h-0"
               style={{ paddingBottom: "calc(var(--tabbar-h) + var(--safe-b) + 22px)", overscrollBehavior: "contain" }}>
           {tab === "home" && (
-            <Home refreshKey={refreshKey} onOpen={setCoin} onChanged={refresh}
-                  onShowAll={() => setTab("signals")} mode={mode} />
+            <Home refreshKey={refreshKey} onOpen={setCoin} onChanged={refresh} mode={mode} />
           )}
-          {tab === "signals" && <Feed refreshKey={refreshKey} onOpen={setCoin} mode={mode} />}
           {tab === "positions" && <Positions refreshKey={refreshKey} onOpen={setCoin} />}
           {tab === "analytics" && <Analytics refreshKey={refreshKey} />}
           {tab === "profile" && <Profile refreshKey={refreshKey} />}

@@ -12,10 +12,10 @@
  * берутся готовыми с сервера. Сутки — календарные по Бишкеку (UTC+6), как в
  * отчётности бота; иначе «День» на главной спорил бы с днём в аналитике.
  *
- * Ниже — быстрые действия в стиле прежних `QuickAction`, лента последних
- * сигналов скринера (те же карточки, что на вкладке «Сигналы», чтобы их можно
- * было листать прямо с главной) и короткая сводка по открытым позициям. Порядок
- * строгий: сначала финансы, потом сигналы. Всё собрано из готовых примитивов
+ * Ниже — быстрые действия в стиле прежних `QuickAction`, ПОЛНАЯ лента сигналов
+ * скринера (отдельной вкладки «Сигналы» больше нет — вся лента живёт здесь,
+ * прокручивается вместе со страницей) и короткая сводка по открытым позициям.
+ * Порядок строгий: сначала финансы, потом сигналы. Всё собрано из готовых примитивов
  * (`Title`, `Glass`, `Press`, `Segmented`, `Row`, `Sheet`) — своего «панельного»
  * языка у главной нет.
  */
@@ -57,12 +57,10 @@ function periodFrom(p: Period, nowSec: number): number {
   return p === "d" ? dayStart : dayStart - 6 * 86400;
 }
 
-export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
+export function Home({ refreshKey, onOpen, onChanged, mode }: {
   refreshKey: number;
   onOpen: (ref: CoinRef) => void;
   onChanged: () => void;
-  /** Переход на вкладку «Сигналы» — по строке «Показать все сигналы». */
-  onShowAll: () => void;
   /** Режим данных: в mock над карточкой стоит плашка «демо-данные». */
   mode?: DataMode | null;
 }) {
@@ -70,10 +68,11 @@ export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
   const positions = useApi(() => listPositions(), 15000, [refreshKey]);
   const trades = useApi(() => listTrades(500), 15000, [refreshKey]);
   const settings = useApi(getSettings, 0, [refreshKey]);
-  // Лента сигналов на главной: те же данные и тот же опрос, что на вкладке
-  // «Сигналы» (экраны не видны одновременно, поэтому API не дёргается вдвое).
-  // На главной берём короткий хвост — 10–15 последних, а не всю ленту.
-  const signals = useApi(() => listSignals({ limit: 15 }), 20000, [refreshKey]);
+  // Лента сигналов на главной — ВСЯ, а не хвост: отдельной вкладки «Сигналы»
+  // больше нет, и то, что показано здесь, и есть весь список от скринера.
+  // Потолок 200 — разумный предел на запрос; сортировку задаёт сервер (новые
+  // сверху), поэтому порядок не переворачиваем.
+  const signals = useApi(() => listSignals({ limit: 200 }), 20000, [refreshKey]);
 
   const [period, setPeriod] = useState<Period>("d");
   const [detail, setDetail] = useState(false);
@@ -211,10 +210,9 @@ export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
 
       {/* ── Сигналы скринера ─────────────────────────────────────────────── */}
       {/* Строго ниже финансов: сначала результат и быстрые действия, потом то,
-          что нашёл скринер. Карточки — общий `SignalCard` (тот же вид, что на
-          вкладке «Сигналы»). Лента прокручивается вместе со страницей, своего
-          узкого скролла у неё нет; показываем 10–15 последних, дальше — строка
-          перехода на вкладку, чтобы можно было листать всю ленту. */}
+          что нашёл скринер. Карточки — общий `SignalCard`. Показываем ВСЮ ленту
+          (до 200 записей), прокручивается она вместе со страницей — своего
+          узкого скролла у неё нет. */}
       <GroupLabel>Сигналы скринера</GroupLabel>
       {signals.loading && !signals.data && <Loading label="загружаем сигналы…" />}
       {!signals.loading && signals.error && (
@@ -237,12 +235,6 @@ export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
           {signals.data.map((s) => (
             <SignalCard key={s.id} s={s} onOpen={onOpen} />
           ))}
-          <Press onClick={onShowAll} className="block w-full" feel="press">
-            <Glass flat className="py-3 flex items-center justify-center gap-1 text-[15px] font-semibold"
-                   style={{ color: "var(--tint-soft)" }}>
-              Показать все сигналы <ChevronRight size={16} />
-            </Glass>
-          </Press>
         </div>
       )}
 
@@ -255,7 +247,7 @@ export function Home({ refreshKey, onOpen, onChanged, onShowAll, mode }: {
       {positions.data && opens.length === 0 && !positions.error && (
         <div className="px-4">
           <Glass flat className="p-4 text-center text-[14px]" style={{ color: "var(--label-2)" }}>
-            Открытых позиций нет — откройте сделку на вкладке «Сигналы».
+            Открытых позиций нет — откройте сделку из ленты сигналов выше.
           </Glass>
         </div>
       )}

@@ -30,7 +30,7 @@ import {
   CandlestickSeries, HistogramSeries, LineStyle, createChart,
   type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
-import { GripHorizontal, Maximize2 } from "lucide-react";
+import { GripHorizontal, Loader2, Maximize2 } from "lucide-react";
 import { candles as fetchCandles } from "../lib/api";
 import type { Candle, ChartTf, Position } from "../../shared/types";
 import { cssVar } from "../ui/kit";
@@ -408,10 +408,14 @@ export function PriceChart({
           })()}
         </div>
 
-        {/* Состояния поверх графика: сначала загрузка, потом ошибка/пусто. */}
+        {/* Состояния поверх графика: сначала загрузка, потом ошибка/пусто.
+            Пустой ответ — не поломка: говорим об этом честно, а не оставляем
+            голую рамку без объяснения. Пока данные в пути — индикатор загрузки;
+            пришла ошибка — её текст, а не пустота. */}
         {loading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center text-[13px]"
+          <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 text-[13px]"
                style={{ color: "var(--label-3)", background: "color-mix(in srgb, var(--bg) 55%, transparent)" }}>
+            <Loader2 size={16} className="animate-spin" />
             загружаем свечи…
           </div>
         )}
@@ -422,9 +426,9 @@ export function PriceChart({
           </div>
         )}
         {!loading && !error && data && data.length === 0 && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center text-[13px]"
+          <div className="absolute inset-0 z-20 flex items-center justify-center px-6 text-center text-[13px]"
                style={{ color: "var(--label-3)" }}>
-            по этой монете свечей ещё нет
+            по этой монете свечей в источнике нет
           </div>
         )}
       </div>
