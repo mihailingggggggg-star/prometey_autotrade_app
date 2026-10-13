@@ -312,16 +312,22 @@ async function pairsForAddrs(addrs: string[]): Promise<DexPair[]> {
  * дешёвый предфильтр по её полям — БЕЗ сети на каждого токена; лишь по прошедшим
  * ОДИН батч DexScreener (наполняет кэш лучших пар), затем резервный добор (топ
  * пулов по объёму) и «свежие» малым весом.
+ *
+ * @param want сколько кандидатов реально нужно вызывающему (по умолчанию
+ *   MAX_CANDIDATES). Курсор ротации сдвигается РОВНО на оценённую порцию, поэтому
+ *   при меньшем запросе монеты не пропускаются на целый обход.
  */
-export async function listCandidates(): Promise<SourceRef[]> {
+export async function listCandidates(want?: number): Promise<SourceRef[]> {
   const now = Date.now();
   const seen = new Set<string>();
   const out: SourceRef[] = [];
+  // Сколько кандидатов пускаем за проход: не больше запрошенного и не больше потолка.
+  const cap = Math.max(1, Math.min(want ?? MAX_CANDIDATES, MAX_CANDIDATES));
   // Ротация начинается заново: если вселенную получить не удалось, не отдаём
   // прошлогоднюю позицию как «текущую» (getLastCandidateRotation вернёт null).
   lastRotation = null;
   const add = (ref: SourceRef): boolean => {
-    if (!ref.token_addr || seen.has(ref.token_addr) || out.length >= MAX_CANDIDATES) return false;
+    if (!ref.token_addr || seen.has(ref.token_addr) || out.length >= cap) return false;
     seen.add(ref.token_addr);
     out.push(ref);
     return true;
@@ -334,7 +340,7 @@ export async function listCandidates(): Promise<SourceRef[]> {
   //    ОДИН батч DexScreener по лучшей Solana-паре — та же пара (bestPairCache)
   //    уйдёт в market()/candles(), значит возраст, ликвидность и свечи считаются
   //    по ОДНОЙ паре, без расхождения.
-  const mainQuota = MAX_CANDIDATES - FRESH_CANDIDATES;
+  const mainQuota = Math.max(0, cap - FRESH_CANDIDATES);
   // Вселенная Jupiter нужна и НИЖЕ — свежему добору: чтобы фильтровать его ТЕМ
   // ЖЕ значением признака, что прочтёт слой 3 (см. freshPass).
   let uni: Map<string, JupiterToken> | null = null;
@@ -358,7 +364,10 @@ export async function listCandidates(): Promise<SourceRef[]> {
     const portion = Math.min(mainQuota, JUPITER_MINT_LIMIT, total);
     const start = total > 0 ? readCursor(total) : 0;
     if (total > 0) {
-      lastRotation = { from: start + 1, to: start + portion, total };
+      // Диапазон пишем только когда порция непустая: при portion = 0 (весь проход
+      // занят событийными монетами) курсор не двигается, и «N+1–N» в логе было бы
+      // инвертированным диапазоном, а не честной позицией обхода.
+      if (portion > 0) lastRotation = { from: start + 1, to: start + portion, total };
       writeCursor((start + portion) % total);
     }
     const probe = rotate(pass, start, portion);
@@ -450,7 +459,7 @@ export async function listCandidates(): Promise<SourceRef[]> {
   fresh.sort((a, b) => b.liq - a.liq);
   let freshAdded = 0;
   for (const f of fresh) {
-    if (freshAdded >= FRESH_CANDIDATES) break;
+    if (freshAdded >= FRESH_CANDIDATES || out.length >= cap) break;
     if (add(f.ref)) freshAdded++;
   }
 

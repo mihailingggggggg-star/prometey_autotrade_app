@@ -242,8 +242,8 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
                            suffix="%" onCommit={(v) => patch({ screener: { top10_max: v } })} />
                 <SliderRow label="Коридор накопления, дней" value={draft.screener.range_days} min={1} max={90} step={1}
                            suffix=" дн" onCommit={(v) => patch({ screener: { range_days: v } })} />
-                <SliderRow label="Ширина коридора" value={draft.screener.range_pct} min={1} max={100} step={1}
-                           suffix="%" onCommit={(v) => patch({ screener: { range_pct: v } })} />
+                <SliderRow label="Ширина коридора, до" value={+(draft.screener.range_pct * 2).toFixed(1)} min={2} max={100} step={1}
+                           suffix="%" onCommit={(v) => patch({ screener: { range_pct: v / 2 } })} />
                 <SliderRow label="Падение от ATH, от" value={draft.screener.drawdown_min} min={0} max={100} step={1}
                            suffix="%" onCommit={(v) => patch({ screener: { drawdown_min: v } })} />
                 <SliderRow label="Падение от ATH, до" value={draft.screener.drawdown_max} min={0} max={100} step={1}

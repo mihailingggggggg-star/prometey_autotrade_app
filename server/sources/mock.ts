@@ -129,7 +129,7 @@ export interface SocialData {
 
 export interface DataSource {
   mode: DataMode;
-  listCandidates(): Promise<SourceRef[]>;
+  listCandidates(want?: number): Promise<SourceRef[]>;
   market(ref: SourceRef, now: number): Promise<MarketData>;
   price(tokenAddr: string, now: number): Promise<number>;
   rug(ref: SourceRef): Promise<RugData>;
@@ -563,7 +563,8 @@ export function createMockSource(epoch: number): DataSource {
   const rngFor = (addr: string) => mulberry32(fnv1a(addr) ^ 0x51ed270b);
   return {
     mode: "mock",
-    async listCandidates() {
+    async listCandidates(_want?: number) {
+      // mock отдаёт свой фиксированный набор; want не влияет на поведение.
       return UNIVERSE.map((_, i) => refFor(i));
     },
     async market(ref, now) {

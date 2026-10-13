@@ -812,6 +812,10 @@ export function takeEventCandidates(limit: number): EventCandidate[] {
   for (const r of rows) {
     let c = byToken.get(r.token_addr);
     if (!c) {
+      // Потолок монет за проход: новые сверх потолка пропускаем, но строки уже
+      // собранных токенов дочитываем — иначе их коды/eventIds теряются до
+      // следующего скана.
+      if (byToken.size >= limit) continue;
       c = {
         ref: { token_addr: r.token_addr, pair_addr: r.token_addr, symbol: r.symbol, name: r.symbol },
         eventIds: [],
@@ -822,7 +826,6 @@ export function takeEventCandidates(limit: number): EventCandidate[] {
     c.eventIds.push(r.id);
     const code = r.code as EventCode;
     if (c.codes.length < 3 && !c.codes.includes(code)) c.codes.push(code);
-    if (byToken.size > limit && !byToken.has(r.token_addr)) break;
   }
   return [...byToken.values()].slice(0, limit);
 }

@@ -23,6 +23,7 @@ import {
   dexCandles,
   dexPrice,
   listCandidates as dexListCandidates,
+  MAX_CANDIDATES,
   setRangeDays,
   setCandidateFilter,
   getLastCandidateRotation,
@@ -111,10 +112,12 @@ export function getSource(): DataSource {
 function createLiveSource(): DataSource {
   return {
     mode: "live",
-    async listCandidates() {
+    async listCandidates(want?: number) {
       // Кандидаты: DexScreener (профили/бусты) + GeckoTerminal (trending/new),
       // затем ОДИН батч-запрос DexScreener по адресам за всю пачку (≤60).
-      return dexListCandidates();
+      // want пробрасываем вниз: курсор ротации сдвинется ровно на запрошенную
+      // порцию (без пропуска монет, см. dexscreener.listCandidates).
+      return dexListCandidates(want);
     },
     async market(ref) {
       return dexMarket(ref);
@@ -650,12 +653,37 @@ async function runScanOnce(): Promise<ScanResult> {
   const maxMs = getEnvNum("SCAN_MAX_MS") || MAX_SCAN_MS;
   // Событийный отбор: сначала берём кандидатов из events (статус new, свежие
   // вперёд, потолок за проход) и прогоняем через те же слои. Монета, приведённая
-  // событием, несёт свои коды (до трёх) — они уйдут в сигнал. Если событийных
-  // кандидатов НЕТ, работает прежний перебор порции (ротация) — ничего не сломано.
+  // событием, несёт свои коды (до трёх) — они уйдут в сигнал. События —
+  // ПРИОРИТЕТНЫЙ фидер: их кандидаты идут первыми, а остаток добирается обычной
+  // ротацией до общего потолка прохода (MAX_CANDIDATES). Под частыми событиями
+  // перебор вселенной больше не «залипает»: даже если свежие есть, ротация
+  // добавляет своё к остатку. Если событийных кандидатов нет — работает прежний
+  // перебор порции (ротация) — ничего не сломано.
   const eventCands = src.mode === "live" ? takeEventCandidates(MAX_EVENT_CANDIDATES) : [];
   const eventByToken = new Map<string, EventCandidate>();
   for (const c of eventCands) eventByToken.set(c.ref.token_addr, c);
-  const candidates = eventCands.length ? eventCands.map((c) => c.ref) : await src.listCandidates();
+  const candidates = eventCands.map((c) => c.ref);
+  if (src.mode === "live") {
+    // Добор ротации только если событийные не заполнили потолок прохода.
+    if (candidates.length < MAX_CANDIDATES) {
+      const seen = new Set(candidates.map((r) => r.token_addr));
+      try {
+        const rot = await src.listCandidates(MAX_CANDIDATES - candidates.length);
+        for (const r of rot) {
+          if (candidates.length >= MAX_CANDIDATES) break;
+          if (seen.has(r.token_addr)) continue; // событийная монета — не дублируем
+          seen.add(r.token_addr);
+          candidates.push(r);
+        }
+      } catch (e) {
+        // Ротация недоступна — не падаем, работаем на событийных кандидатах.
+        console.error(`[скан] ротация недоступна: ${(e as Error).message}`);
+      }
+    }
+  } else {
+    // mock: прежнее поведение — кандидаты целиком из источника.
+    candidates.push(...(await src.listCandidates()));
+  }
   scanState.candidates_total = candidates.length;
   // Лог планового (и ручного) скана: какую порцию выборки взяли. Нужен, чтобы
   // владелец видел, что воронка ходит по кругу, а не жуёт один и тот же топ.

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { listCandidates, getLastCandidateRotation } from "../sources/dexscreener.ts";
 import { runScan } from "../screener.ts";
 import { cacheClear } from "../sources/net.ts";
-import { setSettings, DEFAULT_SETTINGS, metaSet, closeDb } from "../db.ts";
+import { setSettings, DEFAULT_SETTINGS, metaSet, closeDb, getDb, nowSec } from "../db.ts";
 
 const realFetch = globalThis.fetch;
 const DAY_MS = 86_400_000;
@@ -261,6 +261,54 @@ test("SCAN_DEBUG: печатает причину отбраковки, по у�
       .reduce((a, [, v]) => a + (v as number), 0);
     assert.equal(checkSum, layerSum, `by_check ${checkSum} ≠ слои ${layerSum}`);
   } finally {
+    teardown();
+  }
+});
+
+test("добор ротации: событийные кандидаты первыми, ротация добирает остаток", async () => {
+  liveSetup();
+  process.env.SCAN_DEBUG = "1";
+  const tokens = makeTokens(80);
+  const db = getDb();
+  db.exec("DELETE FROM events");
+  // Две свежие монеты-события (статус new) на адресах вне вселенной ротации.
+  const ins = db.prepare(
+    "INSERT INTO events(ts,token_addr,symbol,code,label_ru,note,metrics_json,status,signal_id)" +
+      " VALUES(?,?,?,?,?,?,?,'new',NULL)",
+  );
+  const ts = nowSec();
+  const evA = "EVaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const evB = "EVbBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+  ins.run(ts, evA, "EVA", "breakout", "пробой", "", "{}");
+  ins.run(ts, evB, "EVB", "lp_inflow", "приток", "", "{}");
+  const order: string[] = [];
+  try {
+    await withFetch(burnedHandler(tokens), async () => {
+      const cap = captureErr();
+      try {
+        await runScan();
+      } finally {
+        cap.restore();
+      }
+      // Порядок оценки кандидатов = порядок строк отбраковки/сигнала.
+      for (const l of cap.lines) {
+        const m = l.match(/^\[скан\] (?:ОТБРАКОВКА|СИГНАЛ) (\S+)/);
+        if (m) order.push(m[1]);
+      }
+    });
+    assert.ok(order.includes("EVA") && order.includes("EVB"), `событийные монеты оценены: ${order.slice(0, 4)}`);
+    assert.ok(order.indexOf("EVA") < 3 && order.indexOf("EVB") < 3, "событийные идут первыми");
+    assert.ok(order.length > 2, `после событийных ротация добрала монеты (оценено ${order.length})`);
+    assert.ok(
+      order.slice(2).every((s) => /^T\d+$/.test(s)),
+      `после событийных — только монеты ротации: ${order.slice(2, 5)}`,
+    );
+  } finally {
+    try {
+      getDb().exec("DELETE FROM events");
+    } catch {
+      /* БД уже закрыта — не мешаем уборке */
+    }
     teardown();
   }
 });

@@ -8,7 +8,8 @@
  *  2) гонка двойного Free Riding: две защиты (очередь + атомарный захват) —
  *     интеграционный сторож + отдельный сторож атомарного захвата (см. ниже);
  *  8) цель 2 в статусе free_ride закрывает остаток (tp_full) + пересчёт ТП на докупке;
- * 10) позиция с tp1_fraction=1 из старой базы закрывается (tp_full), а не зависает;
+ * 10) позиция с нулевым остатком закрывается (tp_full), а не зависает;
+ * 11) значение из старой базы вне спеки зажимается к спеке и не ломает setSettings;
  *  5) setTp отдаёт реальную цену, а не перенесённую линию;
  *  6) битый % в пути — 400, не 500;
  *  7) tp_percent=null не даёт мгновенный Free Riding;
@@ -270,20 +271,20 @@ test("цель 2: остаток у free_ride закрывается по tp_pri
 
 /* ── 10. Позиция с нулевым объёмом не зависает ── */
 
-test("страховка: tp1_fraction=1 из старой базы закрывает позицию (tp_full), а не вешает её", async () => {
+test("страховка: позиция с нулевым остатком закрывается (tp_full), а не вешает её", async () => {
   resetWorld();
   setSettings({
     ...DEFAULT_SETTINGS,
     demo: { ...DEFAULT_SETTINGS.demo, tick_minutes: 60 },
     free_ride: { ...DEFAULT_SETTINGS.free_ride, tp1_percent: 1, tp1_fraction: 0.5 },
   });
-  // Значение из СТАРОЙ базы: валидация его больше не пропускает, но в данных оно есть.
-  getDb().prepare("UPDATE settings SET value_json=? WHERE key='free_ride.tp1_fraction'").run("1");
-  assert.equal(getSettings().free_ride.tp1_fraction, 1, "подготовка: в базе tp1_fraction=1");
-
   const scan = await runScan();
   // Цель 2 недостижима: закрытие обязано случиться страховкой на триггере, не по ТП.
   const pos = await openPosition({ signal_id: scan.ids[0], usd: 100, order_type: "market", tp_percent: 1000 });
+  // Значение из СТАРОЙ базы теперь зажимается к спеке на чтении (см. readGroup),
+  // поэтому страховку движка проверяем напрямую — позицией с пылевым остатком:
+  // фиксация tp1_fraction оставляет qty ≤ EPS, и без страховки позиция зависла бы.
+  getDb().prepare("UPDATE positions SET qty=? WHERE id=?").run(1e-9, pos.id);
 
   let cur: Position = pos;
   for (let i = 0; i < 500 && cur.status !== "closed"; i++) {
@@ -293,7 +294,12 @@ test("страховка: tp1_fraction=1 из старой базы закрыв
   assert.equal(cur.status, "closed", "позиция с нулевым объёмом обязана закрыться, а не висеть вечно");
   assert.equal(cur.close_reason, "tp_full");
   assert.equal(cur.qty, 0, "остаток обнулён");
-  assert.ok(cur.realized_usd > 0, "реализованный результат ненулевой (капитал вернулся)");
+  // Остаток пылевой, поэтому берём РАВНОЕ из БД: ответ API округляет до центов
+  // (r2), и пылевой реализованный результат там стал бы нулём.
+  const raw = getDb().prepare("SELECT realized_usd FROM positions WHERE id=?").get(pos.id) as {
+    realized_usd: number;
+  };
+  assert.ok(raw.realized_usd > 0, "реализованный результат ненулевой (капитал вернулся)");
 
   // История: listTrades берёт только status='closed' — сделка обязана туда попасть.
   assert.ok(listTrades(100).some((t) => t.position_id === pos.id), "сделка попала в /api/trades");
@@ -310,6 +316,27 @@ test("страховка: tp1_fraction=1 из старой базы закрыв
     (e: unknown) => e instanceof ApiError && (e as ApiError).code === "invalid_settings",
     "новое tp1_fraction=1 не проходит валидацию",
   );
+  setSettings(DEFAULT_SETTINGS);
+});
+
+/* ── 11. Старые значения настроек зажимаются к спеке ── */
+
+test("настройки: значение из старой базы вне спеки зажимается и не ломает setSettings", async () => {
+  resetWorld();
+  setSettings(DEFAULT_SETTINGS);
+  // СТАРАЯ база: прежний слайдер допускал width до 100% (range_pct до 50 при
+  // полуширине), а ещё раньше — до 100; спека ужесточилась до max 50.
+  getDb().prepare("UPDATE settings SET value_json=? WHERE key='screener.range_pct'").run("80");
+  assert.equal(getSettings().screener.range_pct, 50, "80 из старой базы читается как граница спеки 50");
+  // liq_max = 0 («без потолка») законен и зажимом НЕ превращается в liq_min.
+  getDb().prepare("UPDATE settings SET value_json=? WHERE key='screener.liq_max'").run("0");
+  assert.equal(getSettings().screener.liq_max, 0, "нулевой потолок ликвидности остаётся нулём");
+
+  // Правка ДРУГОГО поля не падает из-за старого значения: раньше любое сохранение
+  // отбивалось invalid_settings, пока владелец не тронет именно этот ползунок.
+  const s = setSettings({ screener: { range_days: 30 } });
+  assert.equal(s.screener.range_days, 30, "сохранение другого поля прошло");
+  assert.equal(s.screener.range_pct, 50, "зажатое значение сохранилось как есть");
   setSettings(DEFAULT_SETTINGS);
 });
 

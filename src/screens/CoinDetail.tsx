@@ -407,7 +407,7 @@ function IndicatorsBlock({ ind }: { ind: Indicators }) {
       <KV label="Средняя сделка" value={money0(ind.avg_trade_usd)} mono />
       <KV label="Доля топ-10 холдеров" value={`${ind.top10_holders_pct}%`} mono />
       <KV label="Падение от ATH" value={`−${ind.drawdown_from_ath_pct}%`} mono />
-      <KV label="Коридор накопления" value={`±${ind.range_pct}%`} mono />
+      <KV label="Коридор накопления" value={`ширина ${ind.range_pct}%`} mono />
     </div>
   );
 }

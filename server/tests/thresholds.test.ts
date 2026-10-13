@@ -1,9 +1,10 @@
 /**
- * thresholds.test.ts — решения владельца от 12.10.2026 и починка замера:
+ * thresholds.test.ts — решения владельца от 12.10.2026, 13.10.2026 и починка замера:
  *   • слой 1: порог сожжённой ликвидности 70% (принимает 70 и 100, отвергает 69);
  *   • слой 2: счета пулов опознаются ПО ПРОГРАММЕ AMM и исключаются; при
  *     неопознанном владельце исключается крупнейший счёт с честной подписью;
  *     без RPC верхняя оценка Jupiter (ориентир 30%) НЕ блокирует;
+ *   • слой 4 (13.10.2026): ширина коридора ≤45%, просадка от ATH 40..95%;
  *   • слой 4: короткий/пустой дневной ряд собирается из часовых свечей;
  *   • потолок кандидатов (~40) соблюдается вместе с бюджетом запросов.
  * Сеть не трогаем: подменяем fetch и RPC моками.
@@ -360,6 +361,94 @@ test("слой 4: пустой дневной ряд собирается из �
     },
   );
   process.env.DATA_MODE = "mock";
+});
+
+/* ─────── слой 4: пороги коридора/просадки (решение владельца 13.10.2026) ─────── */
+
+/**
+ * Дневные свечи с управляемыми коридором и просадкой:
+ *   • 6 ранних баров задают ATH (от него считаем просадку);
+ *   • 14 последних (окно range_days) — коридор: края окна winHi/winLo;
+ *   • close последнего бара — текущая цена.
+ * Коридор = (hi−lo)/mid, просадка = (ATH−close)/ATH.
+ */
+function layer4Rows(ath: number, winHi: number, winLo: number, close: number): number[][] {
+  const mid = (winHi + winLo) / 2;
+  const early: number[][] = [
+    [ath * 0.9, ath, ath * 0.7, ath * 0.8, 1000],
+    [ath * 0.5, ath * 0.55, ath * 0.4, ath * 0.45, 400],
+    [ath * 0.35, ath * 0.4, ath * 0.28, ath * 0.32, 300],
+    [ath * 0.28, ath * 0.32, ath * 0.22, ath * 0.26, 250],
+    [ath * 0.24, ath * 0.28, ath * 0.18, ath * 0.22, 200],
+    [ath * 0.2, ath * 0.24, ath * 0.15, ath * 0.18, 150],
+  ];
+  const win = Array.from({ length: 14 }, () => [mid, winHi, winLo, close, 50]);
+  return [...early, ...win];
+}
+
+/** Обвязка воронки с настраиваемым дневным рядом на каждый минт; слои 1/2/3/5 проходные. */
+function layer4Handler(rowsByMint: Record<string, number[][]>) {
+  const now = Date.now();
+  const nowS = Math.floor(now / 1000);
+  return (url: string): Response => {
+    if (url.includes("lite-api.jup.ag/tokens/v2/tag")) return jsonResp(Object.keys(rowsByMint).map((m) => jupTok(m)));
+    if (url.includes("/ohlcv/")) {
+      const mint = url.split("/pools/")[1].split("/")[0].replace(/^POOL_/, "");
+      const rows = rowsByMint[mint] ?? [];
+      return jsonResp({ data: { attributes: { ohlcv_list: rows.map((r, i) => [nowS - (rows.length - i) * DAY_S, ...r]) } } });
+    }
+    if (url.includes("/trades"))
+      return jsonResp({ data: Array.from({ length: 130 }, (_, i) => ({ attributes: { tx_from_address: `m${i}` } })) });
+    if (url.includes("token-profiles") || url.includes("token-boosts") || url.includes("trending_pools") || url.includes("new_pools") || url.includes("/networks/solana/pools"))
+      return jsonResp([]);
+    if (url.includes("/latest/dex/tokens/")) {
+      const addrs = decodeURIComponent(url.split("/latest/dex/tokens/")[1].split("?")[0]).split(",");
+      return jsonResp({
+        pairs: addrs.map((a) => ({
+          chainId: "solana", pairAddress: `POOL_${a}`, baseToken: { address: a, symbol: "T", name: "T" },
+          priceUsd: "1", liquidity: { usd: 50_000 }, marketCap: 5_000_000, pairCreatedAt: now - 60 * DAY_MS, volume: { h24: 20_000 },
+        })),
+      });
+    }
+    if (url.includes("rugcheck"))
+      return jsonResp({ mintAuthority: null, freezeAuthority: null, risks: [], markets: [{ lp: { lpLockedPct: 100 } }] });
+    throw new Error("неожиданный запрос: " + url);
+  };
+}
+
+test("слой 4 (13.10.2026): коридор ≤45% и просадка ≥40% проходят, шире/мельче — нет", async () => {
+  process.env.DATA_MODE = "live";
+  delete process.env.FLUX_RPC_URL;
+  cacheClear();
+  setSettings(DEFAULT_SETTINGS);
+  const pass = "L4PASS000000000000000000000000000000000000";
+  const wide = "L4WIDE000000000000000000000000000000000000";
+  const shallow = "L4SHALLOW00000000000000000000000000000000";
+  const rowsByMint: Record<string, number[][]> = {
+    [pass]: layer4Rows(200, 155, 100, 110), // коридор ~43.1%, просадка 45% → проходит
+    [wide]: layer4Rows(250, 160, 96, 120), // коридор 50%, просадка 52% → tight_range
+    [shallow]: layer4Rows(100, 70, 60, 65), // коридор ~15.4%, просадка 35% → drawdown
+  };
+  await withFetch(layer4Handler(rowsByMint), async () => {
+    const r = await runScan();
+    assert.equal(r.found, 1, `проходит только «коридор 43% / просадка 45%»: ${JSON.stringify(r.rejected_by_layer)}`);
+    const bc = (r.rejected_by_layer as unknown as { by_check: Record<string, number> }).by_check;
+    assert.equal(bc.tight_range, 1, "коридор 50% отбракован по tight_range (был бы принят при старом пороге 40%)");
+    assert.equal(bc.drawdown, 1, "просадка 35% отбракована по drawdown");
+
+    const row = getDb().prepare("SELECT checks_json FROM signals WHERE id=?").get(r.ids[0]) as { checks_json: string };
+    const checks = JSON.parse(row.checks_json) as { code: string; ok: boolean; value: number; threshold: string }[];
+    const tight = checks.find((c) => c.code === "tight_range")!;
+    const dd = checks.find((c) => c.code === "drawdown")!;
+    assert.equal(tight.ok, true);
+    assert.ok(Math.abs(tight.value - 43.1) < 0.2, `коридор ~43.1%, получено ${tight.value}`);
+    assert.match(tight.threshold, /≤45%/, "подпись порога — полная ширина 45%");
+    assert.equal(dd.ok, true);
+    assert.ok(Math.abs(dd.value - 45) < 0.2, `просадка ~45%, получено ${dd.value}`);
+    assert.match(dd.threshold, /40\.\.95%/, "подпись порога 40..95%");
+  });
+  process.env.DATA_MODE = "mock";
+  setSettings(DEFAULT_SETTINGS);
 });
 
 /* ─────────── потолок кандидатов и бюджет ─────────── */

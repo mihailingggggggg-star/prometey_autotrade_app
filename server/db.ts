@@ -298,16 +298,16 @@ export const DEFAULT_SETTINGS: Settings = {
     llm_filter: false,
     range_days: 14,
     // Слой 4, коридор накопления: полная ширина коридора (max-min)/mid ≤ 2*range_pct.
-    // РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: 18 → 20 (ширина ≤40% вместо ≤36%). Боковик
-    // остаётся «сухим», но исчезает вклад отсечки ровно в 2 п.п., из-за которой
-    // срезались кандидаты с уже узким, но чуть шире прежнего порога коридором.
-    range_pct: 20,
-    // Слой 4, просадка от максимума. РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: 70–90 → 50–95.
-    // Причина: наша история ограничена окном (~180 дней), поэтому просадка измеряется
-    // от максимума ДОСТУПНОГО окна и систематически занижена — требование ≥70% отсекло
-    // ВСЕХ кандидатов (ближайший — 67.1%). Порог ≥50% сохраняет смысл стратегии
-    // («глубокая коррекция»), верхняя граница 95% отсекает уже мёртвые монеты.
-    drawdown_min: 50,
+    // РЕШЕНИЕ ВЛАДЕЛЬЦА от 13.10.2026: ширина 40% → 45%. Поле хранит ПОЛУширину,
+    // поэтому 22.5 — вся воронка и подписи в интерфейсе считают полную ширину как
+    // 2*range_pct. Раньше (12.10.2026) ширина была ≤40% (range_pct = 20).
+    range_pct: 22.5,
+    // Слой 4, просадка от максимума. РЕШЕНИЕ ВЛАДЕЛЬЦА от 13.10.2026: 50 → 40.
+    // Причина смягчения та же, что и прежде: наша история ограничена окном (~180 дней),
+    // поэтому просадка измеряется от максимума ДОСТУПНОГО окна и систематически занижена.
+    // Порог ≥40% сохраняет смысл стратегии («глубокая коррекция»), верхняя граница 95%
+    // отсекает уже мёртвые монеты. Раньше (12.10.2026): 70–90 → 50–95.
+    drawdown_min: 40,
     drawdown_max: 95,
     holders_growth_min: 1.5,
     maker_min: 120,
@@ -356,7 +356,8 @@ const SETTINGS_SPEC: Record<keyof Settings, Record<string, Spec>> = {
     wash_filter: { type: "boolean" },
     llm_filter: { type: "boolean" },
     range_days: { type: "number", min: 1, max: 365 },
-    range_pct: { type: "number", min: 1, max: 100 },
+    // range_pct хранит ПОЛУширину коридора: max 50 = полная ширина 100%.
+    range_pct: { type: "number", min: 1, max: 50 },
     drawdown_min: { type: "number", min: 0, max: 100 },
     drawdown_max: { type: "number", min: 0, max: 100 },
     holders_growth_min: { type: "number", min: 0, max: 1000 },
@@ -378,8 +379,9 @@ const SETTINGS_SPEC: Record<keyof Settings, Record<string, Spec>> = {
     tp1_percent: { type: "number", min: 1, max: 10000 },
     // Доля фиксации СТРОГО меньше 1: при 1 продавался бы весь объём, позиция
     // оставалась бы без остатка (зависала в 'free_ride'). Нижняя граница 0.1 —
-    // фиксация меньше десятой доли не имеет смысла. Старые базы со значением 1
-    // валидацию не проходят, но движок всё равно закрывает такую позицию (страховка).
+    // фиксация меньше десятой доли не имеет смысла. Старое значение 1 из базы
+    // readGroup теперь зажимает к 0.9 на чтении; страховка движка на нулевой
+    // остаток (см. demo.ts) остаётся защитой от пылевого qty и прямых правок БД.
     tp1_fraction: { type: "number", min: 0.1, max: 0.9 },
     tp2_percent: { type: "number", min: 1, max: 10000 },
   },
@@ -405,6 +407,24 @@ const STRICT_ORDERED_PAIRS: Record<keyof Settings, [string, string][]> = {
   free_ride: [["tp1_percent", "tp2_percent"]],
 };
 
+/**
+ * Привести прочитанное из БД значение к спеке: числовые зажать в [min, max],
+ * нечисловые/битые — оставить дефолтом. Спасает СТАРЫЕ базы, где спека
+ * ужесточилась: например, range_pct когда-то допускал до 100, а теперь max=50.
+ * Без зажима сохранённое вне диапазона ломало бы следующий setSettings по ЛЮБОМУ
+ * полю (валидация видит всю группу), и владелец не смог бы сохранить ничего, пока
+ * не тронет именно этот ползунок. liq_max = 0 («без потолка») законен (спека min 0)
+ * и остаётся нулём — зажим не превращает его в liq_min.
+ */
+function clampToSpec(group: keyof Settings, short: string, value: unknown): unknown {
+  const sp = SETTINGS_SPEC[group][short];
+  if (!sp) return value;
+  const def = (DEFAULT_SETTINGS[group] as Record<string, unknown>)[short];
+  if (sp.type === "boolean") return typeof value === "boolean" ? value : def;
+  if (typeof value !== "number" || !Number.isFinite(value)) return def;
+  return Math.min(sp.max, Math.max(sp.min, value));
+}
+
 function readGroup<K extends keyof Settings>(group: K): Settings[K] {
   const d = getDb();
   const rows = d.prepare("SELECT key, value_json FROM settings WHERE key LIKE ?").all(`${group}.%`);
@@ -412,7 +432,7 @@ function readGroup<K extends keyof Settings>(group: K): Settings[K] {
   for (const r of rows as { key: string; value_json: string }[]) {
     const short = r.key.slice(group.length + 1);
     try {
-      out[short] = JSON.parse(r.value_json);
+      out[short] = clampToSpec(group, short, JSON.parse(r.value_json));
     } catch {
       // Битый JSON — оставляем дефолт: лучше рабочая настройка, чем падение API.
     }
