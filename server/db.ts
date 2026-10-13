@@ -184,6 +184,59 @@ function migrate(d: DatabaseSync): void {
       PRIMARY KEY (mint, source)
     );
 
+    -- История снимков вселенной Jupiter: копится БЕСПЛАТНО, из уже загруженного
+    -- (кэш) списка токенов — по одному снимку на цикл. По ней считаются события-
+    -- отборщики (медианы объёма, коридор, 6-часовое изменение цены), без единого
+    -- лишнего запроса к внешним API. Пишутся только монеты в окне стратегии по
+    -- возрасту. Ретеншен 30 дней; строки старше 48 ч свёртываются до одного
+    -- значения в час.
+    CREATE TABLE IF NOT EXISTS token_history (
+      mint TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      price REAL NOT NULL,
+      liq_usd REAL NOT NULL,
+      volume_24h REAL NOT NULL,
+      holders REAL NOT NULL,
+      holder_change_24h REAL,
+      liq_change_24h REAL,
+      price_change_24h REAL,
+      price_change_6h REAL,
+      fdv REAL NOT NULL,
+      organic REAL,
+      PRIMARY KEY (mint, ts)
+    );
+
+    -- События-отборщики: сработал любой из семи независимых отборщиков — монета
+    -- уходит в общую воронку. status: new (ждёт воронку) | checked (прошла, но не
+    -- сигнал) | rejected (отбракована слоями) | signaled (стала сигналом). Дедуп по
+    -- (token_addr, code) с TTL EVENT_TTL_MIN — на уровне кода (см. events.ts).
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      token_addr TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      code TEXT NOT NULL,
+      label_ru TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'new',
+      signal_id INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_events_status_ts ON events(status, ts);
+    CREATE INDEX IF NOT EXISTS idx_events_token_code ON events(token_addr, code);
+    CREATE INDEX IF NOT EXISTS idx_events_signal ON events(signal_id);
+
+    -- ВНУТРЕННЯЯ таблица перехода для отборщика safety_cleared: запоминаем
+    -- ПРЕДЫДУЩЕЕ состояние прав минта/заблокированной ликвидности, чтобы событие
+    -- означало именно ПЕРЕХОД (стало отозвано/сожжено), а не «и так было».
+    CREATE TABLE IF NOT EXISTS token_safety (
+      mint TEXT PRIMARY KEY,
+      mint_revoked INTEGER NOT NULL,
+      lp_locked_pct REAL NOT NULL,
+      ts INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts);
     CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
     CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id);
@@ -230,7 +283,8 @@ export const DEFAULT_SETTINGS: Settings = {
     age_min: 7,
     age_max: 180,
     liq_min: 20000,
-    liq_max: 150000,
+    // 0 — без потолка ликвидности (решение владельца 13.10.2026).
+    liq_max: 0,
     // Слой 2: концентрация топ-10 < 25%. Решение владельца от 12.10.2026:
     // порог 15% из исходного ТЗ недостижим на живых данных (честный замер без
     // счёта пула даёт 10–25%), при нём сигналов не было. Измеряется по RPC с
@@ -425,6 +479,10 @@ function validateSettings(s: Settings): void {
     for (const [minKey, maxKey] of ORDERED_PAIRS[group]) {
       const a = (s[group] as Record<string, number>)[minKey];
       const b = (s[group] as Record<string, number>)[maxKey];
+      // Потолок со значением 0 (или меньше) означает «без потолка» — тогда
+      // сравнивать не с чем. Так снят потолок ликвидности (решение владельца
+      // 13.10.2026): liq_max = 0 значит «верхней границы нет».
+      if (b <= 0) continue;
       if (a > b) throw badSetting(group, minKey, `не может быть больше ${maxKey}`);
     }
     for (const [minKey, maxKey] of STRICT_ORDERED_PAIRS[group]) {

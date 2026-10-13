@@ -57,14 +57,10 @@ const DAY_LIMIT = 180;
 /** Часов в сутках — для склейки часовых свечей в дневные (fallback слоя 4). */
 const HOURS_PER_DAY = 24;
 
-/**
- * Потолок FDV вселенной Jupiter (USD): защита от гигантов экосистемы. Их пул
- * обычно толще верхней границы окна ликвидности стратегии и не даёт нужного
- * сжатия. По проверке владельца полоса FDV $0.3M–50M даёт ~868 монет — зрелые
- * мид-капы там есть. Нижнюю границу держит ликвидность (liq_min), здесь только
- * верхний потолок.
- */
-const FDV_CAP_USD = 50_000_000;
+/* Потолок капитализации ($50M) снят решением владельца 13.10.2026: он отсекал
+   всего 8 монет из 1966, то есть работал как формальность. Размер пула воронка
+   и так видит: у крупных монет коридор не сжимается, и их режет слой накопления
+   по существу, а не отсечка заранее. */
 
 /** Часть схемы ответа DexScreener, которую мы реально читаем (документация API). */
 export interface DexPair {
@@ -201,7 +197,10 @@ function passPrefilter(ageDays: number, liqUsd: number): boolean {
     ageDays >= prefilter.ageMin &&
     ageDays <= prefilter.ageMax &&
     liqUsd >= prefilter.liqMin &&
-    liqUsd <= prefilter.liqMax
+    // Потолок ликвидности снят по решению владельца (13.10.2026): он отсекал
+    // монеты формально, по размеру пула, а не по существу. Значение 0 в
+    // настройках означает «без потолка».
+    (prefilter.liqMax <= 0 || liqUsd <= prefilter.liqMax)
   );
 }
 
@@ -223,14 +222,35 @@ function passPrefilter(ageDays: number, liqUsd: number): boolean {
  * настоящие монеты оставались непроверенными. Теперь их отсекает дешёвый
  * предфильтр — до единого сетевого запроса.
  */
-const EXCLUDED_TAGS = new Set(["rwa", "stocks", "xstocks", "prestocks"]);
+const EXCLUDED_TAGS = new Set([
+  // Бумаги на акции и RWA: их выпускает эмитент, а не пул (1999 монет из 3965).
+  "rwa", "stocks", "xstocks", "prestocks",
+  // Обёрнутый стейкинг и LST (145 монет: mSOL, JitoSOL, JupSOL, INF, rkuSOL,
+  // japanSOL). У них НЕ БЫВАЕТ просадки 50% — они растут монотонно, поэтому
+  // воронка пропускала бы их честно по всем проверкам, и они попадали бы в
+  // ленту как «сигналы». После снятия потолков это стало особенно важно.
+  "lst", "original-lst", "yield",
+]);
+
+/**
+ * Второй признак стейкинга — по имени, потому что тег `lst` есть не у всех:
+ * у стейкинг-долларов вроде sUSDai теги только verified и token-2022. Ловим две
+ * формы: «…SOL» (кроме голого SOL) и «s/st + доллар» (sUSD, sUSDe, stUSD).
+ */
+function isWrappedOrStaked(symbol: string): boolean {
+  const s = symbol.trim().toUpperCase();
+  if (!s) return false;
+  if (s !== "SOL" && s.endsWith("SOL")) return true;
+  if (/^(S|ST)(USD|USDT|USDC|USDE)/.test(s)) return true;
+  return false;
+}
 
 function jupiterPass(t: JupiterToken): boolean {
   if (t.age_days === null) return false;
   if (!passPrefilter(t.age_days, t.liq_usd)) return false;
-  if (t.fdv_usd > FDV_CAP_USD) return false;
   if (t.volume_24h_usd <= 0) return false;
   if (t.tags.some((tag) => EXCLUDED_TAGS.has(tag.toLowerCase()))) return false;
+  if (isWrappedOrStaked(t.symbol)) return false;
   return true;
 }
 

@@ -103,6 +103,8 @@ export interface Signal {
   status_label: string;
   sentiment: number;
   is_organic: boolean;
+  /** События-отборщики, которые привели монету в ленту (пусто — плановый скан). */
+  events?: EventCode[];
 }
 
 export interface SignalDetail {
@@ -146,6 +148,44 @@ export interface ScanStart {
   /** true — скан начат этим вызовом; false — уже шёл. */
   started: boolean;
   running: boolean;
+}
+
+/**
+ * Коды событий-отборщиков. Каждый работает независимо и постоянно; сработал —
+ * монета уходит в общую воронку, не сработал — мы ничего не потратили.
+ */
+export type EventCode =
+  /** Сухой всплеск: объём вырос, а цена стоит — признак набора позиции. */
+  | "dry_spike"
+  /** Старт пробоя: цена вышла из коридора накопления с объёмом. */
+  | "breakout"
+  /** Приток ликвидности в пул при плоской цене. */
+  | "lp_inflow"
+  /** Ускорение прироста холдеров при плоской цене. */
+  | "holders_accel"
+  /** Новый пул у зрелой монеты (миграция, новая площадка). */
+  | "new_pool"
+  /** Событие безопасности: права минта отозваны или ликвидность сожжена. */
+  | "safety_cleared"
+  /** Крупные покупки в пуле монеты, прошедшей дешёвые проверки. */
+  | "large_buyer";
+
+export interface TokenEvent {
+  id: number;
+  /** Секунда UTC, когда событие зафиксировано. */
+  ts: number;
+  token_addr: string;
+  symbol: string;
+  code: EventCode;
+  /** Подпись по-русски: «сухой всплеск: объём вырос, цена стоит». */
+  label_ru: string;
+  /** Конкретика: «объём 3.2× медианы, цена +0.8%». */
+  note: string;
+  /** Измеренные значения, по которым сработал триггер. */
+  metrics: Record<string, number | null>;
+  status: "new" | "checked" | "rejected" | "signaled";
+  /** Если событие дошло до сигнала — его id. */
+  signal_id: number | null;
 }
 
 export interface ScanResult {

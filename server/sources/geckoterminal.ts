@@ -252,7 +252,28 @@ export async function ohlcv(pool: string, tf: ChartTf, limit: number): Promise<C
 }
 
 interface TradesResp {
-  data?: { attributes?: { tx_from_address?: string } }[];
+  data?: {
+    attributes?: {
+      tx_from_address?: string;
+      kind?: string;
+      volume_in_usd?: string;
+      block_timestamp?: string;
+    };
+  }[];
+}
+
+/**
+ * Сырая страница сделок пула (кэш общий с tradesMakers — ОДИН запрос на пул в
+ * пределах TTL, какую бы функцию ни позвали). Ошибка источника не глохнет:
+ * вызывающий решает, как её подать.
+ */
+async function tradesRaw(pool: string): Promise<TradesResp> {
+  const url = `${BASE}/networks/${NET}/pools/${pool}/trades`;
+  return netJson<TradesResp>(url, {
+    ttlMs: TTL_TRADES,
+    minIntervalMs: GECKO_INTERVAL_MS,
+    cacheKey: `gecko:trades:${pool}`,
+  });
 }
 
 /**
@@ -261,16 +282,37 @@ interface TradesResp {
  * Возвращаем и признак partial, чтобы проверка честно это показывала.
  */
 export async function tradesMakers(pool: string): Promise<{ makers: number; partial: boolean }> {
-  const url = `${BASE}/networks/${NET}/pools/${pool}/trades`;
-  const j = await netJson<TradesResp>(url, {
-    ttlMs: TTL_TRADES,
-    minIntervalMs: GECKO_INTERVAL_MS,
-    cacheKey: `gecko:trades:${pool}`,
-  });
+  const j = await tradesRaw(pool);
   const set = new Set<string>();
   for (const t of j.data ?? []) {
     const a = t.attributes?.tx_from_address;
     if (a) set.add(a);
   }
   return { makers: set.size, partial: true };
+}
+
+/** Одна сделка пула, приведённая к нашим полям (usd, вид, время в секундах UTC). */
+export interface PoolTrade {
+  ts: number;
+  kind: "buy" | "sell" | "unknown";
+  usd: number;
+}
+
+/**
+ * Сделки пула за доступную страницу (~300 последних). Используется отборщиком
+ * large_buyer: ищем крупную покупку в пределах последнего часа. Пустой ответ —
+ * честный пустой список, не выдуманные сделки.
+ */
+export async function poolTrades(pool: string): Promise<PoolTrade[]> {
+  const j = await tradesRaw(pool);
+  const out: PoolTrade[] = [];
+  for (const t of j.data ?? []) {
+    const a = t.attributes;
+    if (!a) continue;
+    const kind = a.kind === "buy" ? "buy" : a.kind === "sell" ? "sell" : "unknown";
+    const usd = num(a.volume_in_usd);
+    const ts = a.block_timestamp ? Math.floor(Date.parse(a.block_timestamp) / 1000) : 0;
+    out.push({ ts: Number.isFinite(ts) ? ts : 0, kind, usd });
+  }
+  return out;
 }

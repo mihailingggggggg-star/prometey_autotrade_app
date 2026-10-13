@@ -235,8 +235,6 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
                            suffix=" дн" onCommit={(v) => patch({ screener: { age_max: v } })} />
                 <SliderRow label="Ликвидность, от" value={draft.screener.liq_min} min={0} max={500000} step={1000}
                            fmt={(v) => "$" + v.toLocaleString("ru-RU")} onCommit={(v) => patch({ screener: { liq_min: v } })} />
-                <SliderRow label="Ликвидность, до" value={draft.screener.liq_max} min={0} max={2000000} step={5000}
-                           fmt={(v) => "$" + v.toLocaleString("ru-RU")} onCommit={(v) => patch({ screener: { liq_max: v } })} />
               </Group>
 
               <Group label="Концентрация и накопление">

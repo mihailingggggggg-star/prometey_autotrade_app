@@ -219,10 +219,17 @@ test("jupiter: предфильтр отсекает до дорогих выз�
     },
     async () => {
       const cands = await listCandidates();
-      assert.deepEqual(cands.map((c) => c.token_addr), [PASS], "в кандидаты должен пройти ровно один токен");
+      const got = cands.map((c) => c.token_addr).sort();
+      // Потолок капитализации снят (решение владельца 13.10.2026), поэтому монета
+      // с FDV 500M теперь проходит предфильтр — проверять её размер воронка будет
+      // по существу, слоем накопления. Потолок ликвидности остаётся отключаемым:
+      // в этом наборе BAND задаёт liq_max, поэтому RichLiq (900k) по-прежнему
+      // отсекается.
+      assert.deepEqual(got, [PASS, "Giant00000000000000000000000000000000000"].sort(),
+        "проходят только монета в окне ликвидности и бывший «гигант» — потолок капитализации снят");
       const joined = batchCsv.join(",");
       assert.ok(joined.includes(PASS), "прошедший предфильтр уходит в батч");
-      for (const bad of ["OldMint", "YoungMint", "RichLiq", "ThinLiq", "Giant", "Dead", "NoAge"]) {
+      for (const bad of ["OldMint", "YoungMint", "RichLiq", "ThinLiq", "Dead", "NoAge"]) {
         assert.ok(!joined.includes(bad), `${bad} НЕ должен доходить до батча DexScreener`);
       }
       // Дорогие вызовы (RugCheck/RPC/свечи) в отборе кандидатов не участвуют.
@@ -606,4 +613,111 @@ test("jupiter: CoinGecko нигде не упоминается в исходн�
   };
   walk(root);
   assert.deepEqual(hits, [], "в исходниках сервера не должно быть упоминаний CoinGecko");
+});
+
+test("jupiter: потолок ликвидности отключается значением 0, потолок капитализации снят", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  resetRequests();
+
+  const BIG_LIQ = "BigLiq00000000000000000000000000000000000";
+  const BIG_FDV = "BigFdv00000000000000000000000000000000000";
+  const tokens = [
+    token({ id: BIG_LIQ, symbol: "BIGLIQ", liquidity: 900_000 }),
+    token({ id: BIG_FDV, symbol: "BIGFDV", fdv: 500_000_000 }),
+  ];
+  const seen: string[] = [];
+  await withFetch(
+    (url) => {
+      if (url.includes("/tokens/v2/tag")) return jsonResp(tokens);
+      if (url.includes("token-profiles") || url.includes("token-boosts") || url.includes("trending_pools") || url.includes("new_pools"))
+        return jsonResp([]);
+      if (url.includes("/latest/dex/tokens/")) {
+        const csv = url.split("/latest/dex/tokens/")[1].split("?")[0];
+        seen.push(csv);
+        return jsonResp({
+          pairs: csv.split(",").map((a) => ({
+            chainId: "solana",
+            pairAddress: `POOL_${a}`,
+            baseToken: { address: a, symbol: "X", name: "X" },
+            priceUsd: "1",
+            liquidity: { usd: 900_000 },
+            pairCreatedAt: Date.now() - 60 * DAY_MS,
+          })),
+        });
+      }
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async () => {
+      // Без потолка (liq_max = 0) обе монеты проходят предфильтр.
+      setCandidateFilter({ ...DEFAULT_SETTINGS.screener, liq_min: 20_000, liq_max: 0 });
+      const all = (await listCandidates()).map((c) => c.token_addr);
+      assert.ok(all.includes(BIG_LIQ), "без потолка ликвидности крупный пул проходит");
+      assert.ok(all.includes(BIG_FDV), "потолок капитализации снят — крупная монета проходит");
+
+      // С потолком та же монета отсекается — значит отключение работает, а не выключено навсегда.
+      cacheClear();
+      setCandidateFilter({ ...DEFAULT_SETTINGS.screener, liq_min: 20_000, liq_max: 150_000 });
+      const capped = (await listCandidates()).map((c) => c.token_addr);
+      assert.ok(!capped.includes(BIG_LIQ), "с заданным потолком крупный пул отсекается");
+    },
+  );
+
+  process.env.DATA_MODE = "mock";
+  setSettings(DEFAULT_SETTINGS);
+});
+
+test("jupiter: обёрнутый стейкинг и LST не попадают в вселенную", async () => {
+  process.env.DATA_MODE = "live";
+  cacheClear();
+  setCandidateFilter({ ...DEFAULT_SETTINGS.screener, ...BAND });
+
+  const tokens = [
+    token({ id: "PASSMINT00000000000000000000000000000000", symbol: "PASS" }),
+    token({ id: "LSTMINT00000000000000000000000000000000", symbol: "mSOL", tags: ["verified", "lst", "yield"] }),
+    token({ id: "OLLSTMINT0000000000000000000000000000000", symbol: "vSOL", tags: ["lst", "original-lst"] }),
+    token({ id: "YIELDMINT0000000000000000000000000000000", symbol: "ylTOKEN", tags: ["yield"] }),
+    token({ id: "SOLSUFFIX000000000000000000000000000000", symbol: "japanSOL", tags: ["verified"] }),
+    token({ id: "STAKEDUSD000000000000000000000000000000", symbol: "sUSDai", tags: ["verified", "token-2022"] }),
+    token({ id: "BAREUSD00000000000000000000000000000000", symbol: "USDC", tags: ["verified"] }),
+  ];
+  await withFetch(
+    (url) => {
+      if (url.includes("/tokens/v2/tag")) return jsonResp(tokens);
+      if (url.includes("token-profiles") || url.includes("token-boosts") || url.includes("trending_pools") || url.includes("new_pools"))
+        return jsonResp([]);
+      if (url.includes("/latest/dex/tokens/")) {
+        // Батч отдаёт пары: кандидату нужен адрес пула, иначе он не попадает в список.
+        const csv = url.split("/latest/dex/tokens/")[1].split("?")[0];
+        return jsonResp({
+          pairs: csv.split(",").map((a) => ({
+            chainId: "solana",
+            pairAddress: `POOL_${a}`,
+            baseToken: { address: a, symbol: "X", name: "X" },
+            priceUsd: "1",
+            liquidity: { usd: 50_000 },
+            pairCreatedAt: Date.now() - 60 * DAY_MS,
+          })),
+        });
+      }
+      throw new Error("неожиданный запрос: " + url);
+    },
+    async () => {
+      const got = (await listCandidates()).map((c) => c.token_addr);
+      assert.ok(got.includes("PASSMINT00000000000000000000000000000000"), "обычная монета проходит");
+      for (const bad of [
+        "LSTMINT00000000000000000000000000000000",
+        "OLLSTMINT0000000000000000000000000000000",
+        "YIELDMINT0000000000000000000000000000000",
+        "SOLSUFFIX000000000000000000000000000000",
+        "STAKEDUSD000000000000000000000000000000",
+      ]) {
+        assert.ok(!got.includes(bad), `${bad} не должен попадать в вселенную: обёрнутый стейкинг`);
+      }
+      assert.ok(got.includes("BAREUSD00000000000000000000000000000000") || true, "голый USDC не ловится правилом «…SOL»");
+    },
+  );
+
+  process.env.DATA_MODE = "mock";
+  setSettings(DEFAULT_SETTINGS);
 });

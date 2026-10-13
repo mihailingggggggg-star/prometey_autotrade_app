@@ -14,7 +14,7 @@
 import type {Health, Signal, SignalDetail, SignalStatus, ScanResult, Candle, ChartTf,
   Position, PositionStatus, Trade, AnalyticsSummary, Settings, SettingsPatch,
   KeysStatus, KeysUpdate, Alert, AuditEntry, OpenPositionRequest, Fill,
-  ApiErrorBody, ScanStatus, ScanStart } from "../../shared/types";
+  ApiErrorBody, ScanStatus, ScanStart, TokenEvent } from "../../shared/types";
 
 /** Базовый адрес API: ключ `solana.api` из localStorage либо тот же origin. */
 export function apiBase(): string {
@@ -168,6 +168,21 @@ export const listSignals = (opts: { limit?: number; status?: SignalStatus } = {}
 };
 
 export const getSignal = (id: number) => call<SignalDetail>(`/api/signals/${id}`);
+
+/* ── события-отборщики ──
+ * Семь независимых детекторов пишут сюда КАЖДОЕ срабатывание, а не только те,
+ * что дошли до сигнала: лента событий показывает, что отборщики работают, даже
+ * когда сигналов нет. `token` сужает до одной монеты (блок «Почему в ленте» в
+ * карточке), `status` — до состояния воронки. Порядок задаёт сервер (новые
+ * сверху), клиент его не переворачивает. */
+export const listEvents = (opts: { limit?: number; status?: TokenEvent["status"]; token?: string } = {}) => {
+  const q = new URLSearchParams();
+  if (opts.limit != null) q.set("limit", String(opts.limit));
+  if (opts.status) q.set("status", opts.status);
+  if (opts.token) q.set("token", opts.token);
+  const s = q.toString();
+  return call<TokenEvent[]>(`/api/events${s ? `?${s}` : ""}`);
+};
 
 /**
  * Ответ на запуск скана. POST /api/scan больше НЕ ждёт окончания: сервер уводит

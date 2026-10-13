@@ -23,7 +23,7 @@ import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { ChevronRight, Plus, Radar, RefreshCw } from "lucide-react";
 import {
-  addDeposit, analyticsSummary, getSettings, listPositions, listSignals, listTrades,
+  addDeposit, analyticsSummary, getSettings, listEvents, listPositions, listSignals, listTrades,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
 import type { DataMode, Position } from "../../shared/types";
@@ -32,7 +32,8 @@ import { SignalCard } from "../ui/SignalCard";
 import { TokenLogo } from "../ui/TokenLogo";
 import { DemoBanner, ErrorBox, Loading } from "../ui/states";
 import { ScanProgress } from "../ui/ScanProgress";
-import { money as fmtMoney, pct, plural, price as fmtPrice, rr } from "../lib/format";
+import { dt, money as fmtMoney, pct, plural, price as fmtPrice, rr } from "../lib/format";
+import { eventLabel, eventTone } from "../lib/events";
 import type { CoinRef } from "./CoinDetail";
 
 type Period = "d" | "w" | "all";
@@ -74,6 +75,9 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
   // Потолок 200 — разумный предел на запрос; сортировку задаёт сервер (новые
   // сверху), поэтому порядок не переворачиваем.
   const signals = useApi(() => listSignals({ limit: 200 }), 20000, [refreshKey]);
+  // Лента событий-отборщиков: десять последних срабатываний любых детекторов.
+  // Обновляется вместе с сигналами — это одна и та же картина работы скринера.
+  const events = useApi(() => listEvents({ limit: 10 }), 20000, [refreshKey]);
 
   const [period, setPeriod] = useState<Period>("d");
   const [detail, setDetail] = useState(false);
@@ -234,6 +238,47 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
           {signals.data.map((s) => (
             <SignalCard key={s.id} s={s} onOpen={onOpen} />
           ))}
+        </div>
+      )}
+
+      {/* ── События отборщиков ───────────────────────────────────────────── */}
+      {/* Отдельно от сигналов: сработавший детектор не обязан пройти воронку до
+          конца, но сам факт срабатывания виден и тогда, когда сигналов нет —
+          иначе «тишина» выглядела бы как «скринер не работает». Порядок задаёт
+          сервер (новые сверху), клиент его не переворачивает. */}
+      <GroupLabel>События отборщиков</GroupLabel>
+      {events.loading && !events.data && <Loading label="загружаем события…" />}
+      {!events.loading && events.error && (
+        <ErrorBox text={events.error} onRetry={events.refresh} />
+      )}
+      {events.data && events.data.length === 0 && !events.error && (
+        <div className="px-5 text-[13px]" style={{ color: "var(--label-3)" }}>
+          отборщики пока молчат: история копится
+        </div>
+      )}
+      {events.data && events.data.length > 0 && (
+        <div className="px-4">
+          <Glass flat className="overflow-hidden">
+            {events.data.map((e, i) => (
+              <Row
+                key={e.id}
+                last={i === events.data!.length - 1}
+                icon={<TokenLogo symbol={e.symbol} size={30} />}
+                title={e.symbol}
+                note={
+                  <>
+                    <span className="font-semibold" style={{ color: eventTone(e.code) }}>{eventLabel(e.code)}</span>
+                    {e.note ? ` · ${e.note}` : ""}
+                  </>
+                }
+                right={
+                  <span className="text-[12px] tabular-nums" style={{ color: "var(--label-3)" }}>
+                    {dt(e.ts * 1000)}
+                  </span>
+                }
+              />
+            ))}
+          </Glass>
         </div>
       )}
 

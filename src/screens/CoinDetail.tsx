@@ -16,10 +16,12 @@ import {
   MessageCircle, ShieldCheck, ShieldAlert, XCircle,
 } from "lucide-react";
 import {
-  getSignal, listPositions, openPosition, addToPosition, closePosition, setTp as apiSetTp, getSettings,
+  getSignal, listEvents, listPositions, openPosition, addToPosition, closePosition,
+  setTp as apiSetTp, getSettings,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
-import type { Check, DataMode, Indicators, Position, SignalDetail } from "../../shared/types";
+import type { Check, DataMode, Indicators, Position, SignalDetail, TokenEvent } from "../../shared/types";
+import { eventTone, eventTitle, formatMetrics } from "../lib/events";
 import { Glass, Press, Segmented, Modal } from "../ui/kit";
 import { PriceChart } from "../ui/PriceChart";
 import { TokenLogo } from "../ui/TokenLogo";
@@ -57,6 +59,9 @@ export function CoinDetail({ coin, onBack, onChanged, mode }: {
   );
   const positions = useApi(() => listPositions(), 15000, []);
   const settings = useApi(getSettings, 0, []);
+  // События-отборщики именно по этой монете — источник ответа «почему в ленте».
+  // Опрашивается вместе с сигналом: событие может появиться и после открытия.
+  const events = useApi(() => listEvents({ token: coin.tokenAddr }), 15000, [coin.tokenAddr]);
 
   // Позиция именно по этой монете и именно открытая — закрытые в терминале не
   // участвуют (их результат уже посчитан в аналитике).
@@ -260,6 +265,22 @@ export function CoinDetail({ coin, onBack, onChanged, mode }: {
           </Panel>
         </div>
 
+        {/* ПОЧЕМУ В ЛЕНТЕ: сработавшие события-отборщики именно по этой монете —
+            подпись, конкретика, время и измеренные значения. Блок существует
+            ТОЛЬКО при непустом списке: у рядового планового скана «причин» нет,
+            и пустая рамка только занимала бы место на экране. */}
+        {events.data && events.data.length > 0 && (
+          <div className="px-3 mt-3">
+            <Panel title="Почему в ленте">
+              <div className="flex flex-col">
+                {events.data.map((e, i) => (
+                  <EventRow key={e.id} e={e} last={i === events.data!.length - 1} />
+                ))}
+              </div>
+            </Panel>
+          </div>
+        )}
+
         {/* СОСТОЯНИЕ СИГНАЛА: индикаторы + чек-лист */}
         {coin.signalId == null ? (
           <div className="px-5 mt-4 text-[13px]" style={{ color: "var(--label-3)" }}>
@@ -322,6 +343,35 @@ function fmtVal(v: Check["value"]): string {
   if (typeof v === "boolean") return v ? "да" : "нет";
   if (typeof v === "number") return v.toLocaleString("ru-RU", { maximumFractionDigits: 6 });
   return v;
+}
+
+/** Строка события-отборщика: цветная точка и подпись по тону кода, справа —
+ *  время (в поясе отчётности, как везде), ниже конкретика и измеренные значения
+ *  монотипно, чтобы числа читались столбцом, а не как часть фразы. */
+function EventRow({ e, last }: { e: TokenEvent; last?: boolean }) {
+  const tint = eventTone(e.code);
+  const metrics = formatMetrics(e.metrics);
+  return (
+    <div className={`flex items-start gap-2.5 py-2.5 ${last ? "" : "hairline"}`}>
+      <span className="mt-1.5 shrink-0 w-2 h-2 rounded-full" style={{ background: tint }} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[14px] font-semibold leading-snug" style={{ color: tint }}>
+            {eventTitle(e)}
+          </span>
+          <span className="text-[12px] tabular-nums shrink-0" style={{ color: "var(--label-3)" }}>
+            {dt(e.ts * 1000)}
+          </span>
+        </div>
+        {e.note && (
+          <div className="text-[13px] mt-0.5 leading-snug" style={{ color: "var(--label-2)" }}>{e.note}</div>
+        )}
+        {metrics && (
+          <div className="text-[12px] mt-0.5 tabular-nums" style={{ color: "var(--label-3)" }}>{metrics}</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function CheckRow({ c }: { c: Check }) {

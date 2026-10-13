@@ -19,6 +19,7 @@ import type { Signal } from "../../shared/types";
 import { Glass, Press, Row } from "./kit";
 import { TokenLogo } from "./TokenLogo";
 import { price, ago } from "../lib/format";
+import { eventLabel, eventTone } from "../lib/events";
 import type { CoinRef } from "../screens/CoinDetail";
 
 export function SignalCard({ s, onOpen }: {
@@ -73,6 +74,28 @@ export function SignalCard({ s, onOpen }: {
             </span>
           )}
         </div>
+
+        {/* ПОЧЕМУ монета в ленте: события-отборщики, если именно они её сюда
+            привели (пусто — рядовой плановый скан, и тогда ряда нет вовсе).
+            Отдельный ряд и НЕЙТРАЛЬНАЯ подложка (--bg-elev) с цветной точкой:
+            он обязан отличаться от зелёной плашки фазы и от серой отметки о
+            медиа — это другой ответ на другой вопрос. До трёх плашек: больше не
+            влезает на 360px, а остальные причины видны в карточке монеты. */}
+        {(s.events?.length ?? 0) > 0 && (
+          <div className="px-4 pt-2 flex items-center gap-1.5 flex-wrap">
+            {s.events!.slice(0, 3).map((code, i) => {
+              const tint = eventTone(code);
+              return (
+                <span key={`${code}-${i}`}
+                      className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md font-semibold"
+                      style={{ background: "var(--bg-elev)", color: tint }}>
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: tint }} />
+                  {eventLabel(code)}
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {/* Числа — строками, а не самодельной сеткой: тот же язык, что в кабинете. */}
         <div className="mt-2.5">

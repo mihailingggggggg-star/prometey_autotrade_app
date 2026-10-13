@@ -41,6 +41,7 @@ import {
   type SignalRow,
 } from "./db.ts";
 import { runScan, startScan, getScanStatus } from "./screener.ts";
+import { listEvents, codesForSignals, refreshEvents } from "./events.ts";
 import {
   openPosition,
   addToPosition,
@@ -66,6 +67,7 @@ import type {
   Indicators,
   Social,
   ChartTf,
+  EventCode,
   KeysUpdate,
   SettingsPatch,
   Settings,
@@ -84,9 +86,9 @@ const TFS = new Set<ChartTf>(["1m", "5m", "1h", "1d"]);
 
 /* ─────────────── DTO ─────────────── */
 
-function signalDTO(row: SignalRow): Signal {
+function signalDTO(row: SignalRow, eventsMap?: Map<number, EventCode[]>): Signal {
   const status = row.status as SignalStatus;
-  return {
+  const dto: Signal = {
     id: row.id,
     ts: row.ts,
     token_addr: row.token_addr,
@@ -104,6 +106,11 @@ function signalDTO(row: SignalRow): Signal {
     sentiment: row.sentiment,
     is_organic: Boolean(row.is_organic),
   };
+  // События-отборщики, которые привели монету в ленту. Пусто — плановый скан:
+  // поле не выставляем вовсе (контракт: events?: EventCode[]).
+  const codes = eventsMap ? eventsMap.get(row.id) : codesForSignals([row.id]).get(row.id);
+  if (codes && codes.length) dto.events = codes;
+  return dto;
 }
 
 function safeParse<T>(json: string, fallback: T): T {
@@ -383,7 +390,10 @@ const routes: Route[] = [
       const rows = (status
         ? db.prepare("SELECT * FROM signals WHERE status=? ORDER BY ts DESC, id DESC LIMIT ?").all(status, limit)
         : db.prepare("SELECT * FROM signals ORDER BY ts DESC, id DESC LIMIT ?").all(limit)) as unknown as SignalRow[];
-      return rows.map(signalDTO);
+      // Коды событий — ОДНИМ запросом на всю выдачу (не N+1): сигнал помнит, чем
+      // вызван, но лента не должна платить за это запросом на каждую строку.
+      const codes = codesForSignals(rows.map((r) => r.id));
+      return rows.map((r) => signalDTO(r, codes));
     },
   },
   {
@@ -393,6 +403,17 @@ const routes: Route[] = [
       const row = signalById(numId(params));
       if (!row) throw new ApiError("signal_not_found", 404, `сигнал ${params.id} не найден`);
       return signalDetail(row);
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/api/events",
+    // События-отборщики (свежие вперёд). Дешёвый: читаем свою таблицу, без сети.
+    handler: ({ url }) => {
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+      const status = url.searchParams.get("status") ?? undefined;
+      const token = url.searchParams.get("token") ?? undefined;
+      return listEvents({ limit, status, token });
     },
   },
   {
@@ -683,6 +704,12 @@ function start(): void {
   // позиции (Free Riding, time-stop, liq-drain), в live — просто обновляет их.
   setInterval(() => {
     advance().catch((e) => console.error(`[server] цикл обслуживания: ${e instanceof Error ? e.message : e}`));
+    // Слой событий-отборщиков: раз в SNAP_EVERY_MIN минут снимает историю вселенной
+    // Jupiter (из кэша, без новых запросов), убирает старое и считает семь
+    // отборщиков. В mock — no-op. Сам гейт частоты внутри refreshEvents.
+    refreshEvents().catch((e) =>
+      console.error(`[server] слой событий: ${e instanceof Error ? e.message : e}`),
+    );
   }, 60_000).unref?.();
 
   // Периодический скан: скринер обязан искать сам, а не ждать, пока человек

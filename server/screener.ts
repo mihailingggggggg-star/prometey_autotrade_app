@@ -27,6 +27,7 @@ import {
   setCandidateFilter,
   getLastCandidateRotation,
 } from "./sources/dexscreener.ts";
+import { takeEventCandidates, markEvents, type EventCandidate } from "./events.ts";
 import { rug as rugcheckRug } from "./sources/rugcheck.ts";
 import { holders as fluxHolders } from "./sources/helius.ts";
 import { jupiterPrice } from "./sources/jupiter.ts";
@@ -42,6 +43,14 @@ import type {
 } from "../shared/types.ts";
 
 const MAX_PER_SCAN = 5;
+
+/**
+ * Потолок событийных кандидатов за проход: скан берёт из таблицы events монеты со
+ * статусом new (свежие вперёд) не более этой пачки. События — узкая воронка
+ * (сработал отборщик — монета уходит в общие слои), поэтому потолок нужен лишь
+ * чтобы один всплеск событий не вытеснил весь бюджет скана.
+ */
+const MAX_EVENT_CANDIDATES = 40;
 
 /**
  * Слой 1: минимальная доля сожжённой/заблокированной ликвидности, %.
@@ -210,14 +219,23 @@ async function screenCandidate(
   const market: MarketData = isLive ? await dexMarketMeta(ref) : await src.market(ref, now);
   const ageKnown = market.age_na !== true;
   const okAge = ageKnown && market.age_days >= s.age_min && market.age_days <= s.age_max;
-  const okLiq = market.liq_usd >= s.liq_min && market.liq_usd <= s.liq_max;
+  // Потолок ликвидности снят (решение владельца): проверяется только нижняя
+  // граница; s.liq_max <= 0 означает «без потолка».
+  const okLiq = market.liq_usd >= s.liq_min && (s.liq_max <= 0 || market.liq_usd <= s.liq_max);
   const ageSrcSuffix = market.age_source ? ` · ${market.age_source}` : "";
   const liqSrcSuffix = market.liq_source ? ` · ${market.liq_source}` : "";
   checks.push(
     chk(3, "age", "Возраст токена", okAge, ageKnown ? Math.round(market.age_days * 10) / 10 : null, ageKnown ? `${s.age_min}..${s.age_max} дн${ageSrcSuffix}` : "нет данных о создании пула"),
   );
   checks.push(
-    chk(3, "liquidity", "Ликвидность токена", okLiq, Math.round(market.liq_usd), `${s.liq_min}..${s.liq_max}${liqSrcSuffix}`),
+    chk(
+      3,
+      "liquidity",
+      "Ликвидность токена",
+      okLiq,
+      Math.round(market.liq_usd),
+      s.liq_max <= 0 ? `≥${s.liq_min} (без потолка)${liqSrcSuffix}` : `${s.liq_min}..${s.liq_max}${liqSrcSuffix}`,
+    ),
   );
   const ok3 = okAge && okLiq;
 
@@ -630,7 +648,14 @@ async function runScanOnce(): Promise<ScanResult> {
   const now = virtualNow();
   const startedAt = Date.now();
   const maxMs = getEnvNum("SCAN_MAX_MS") || MAX_SCAN_MS;
-  const candidates = await src.listCandidates();
+  // Событийный отбор: сначала берём кандидатов из events (статус new, свежие
+  // вперёд, потолок за проход) и прогоняем через те же слои. Монета, приведённая
+  // событием, несёт свои коды (до трёх) — они уйдут в сигнал. Если событийных
+  // кандидатов НЕТ, работает прежний перебор порции (ротация) — ничего не сломано.
+  const eventCands = src.mode === "live" ? takeEventCandidates(MAX_EVENT_CANDIDATES) : [];
+  const eventByToken = new Map<string, EventCandidate>();
+  for (const c of eventCands) eventByToken.set(c.ref.token_addr, c);
+  const candidates = eventCands.length ? eventCands.map((c) => c.ref) : await src.listCandidates();
   scanState.candidates_total = candidates.length;
   // Лог планового (и ручного) скана: какую порцию выборки взяли. Нужен, чтобы
   // владелец видел, что воронка ходит по кругу, а не жуёт один и тот же топ.
@@ -643,7 +668,7 @@ async function runScanOnce(): Promise<ScanResult> {
   const rejected: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
   // Счётчик отбраковок по КОДУ проверки (какой именно чек положил кандидата).
   const byCheck: Record<string, number> = {};
-  const passed: { ref: SourceRef; res: ScreenResult }[] = [];
+  const passed: { ref: SourceRef; res: ScreenResult; ev?: EventCandidate }[] = [];
 
   let processed = 0;
   for (const ref of candidates) {
@@ -658,16 +683,19 @@ async function runScanOnce(): Promise<ScanResult> {
       break;
     }
     processed++;
+    const ev = eventByToken.get(ref.token_addr);
     try {
       const res = await screenCandidate(src, ref, now, s.screener);
       if (res.open_signal) {
-        passed.push({ ref, res });
+        passed.push({ ref, res, ev });
         scanState.signals_found++;
         if (debug) console.error(`[скан] СИГНАЛ ${ref.symbol}`);
       } else {
         const fail = firstFailCheck(res.checks);
         const layer = fail?.layer ?? 5;
         rejected[String(layer)]++;
+        // Событие, приведшее монету, не прошло слои — фиксируем отказ.
+        if (ev) markEvents(ev.eventIds, "rejected");
         if (fail) {
           byCheck[fail.code] = (byCheck[fail.code] ?? 0) + 1;
           if (debug) {
@@ -681,6 +709,9 @@ async function runScanOnce(): Promise<ScanResult> {
       // Один токен/источник упал — не рушим скан целиком, считаем отбраковкой.
       // Текст ошибки НЕ печатаем (в нём могут быть адреса/параметры источника).
       rejected["error"] = (rejected["error"] ?? 0) + 1;
+      // Замер не состоялся (не отказ рынка) — помечаем checked, чтобы событие не
+      // висело «новым» и не перепроверялось бесконечно на транзиентной ошибке.
+      if (ev) markEvents(ev.eventIds, "checked");
       if (debug) console.error(`[скан] ОТБРАКОВКА ${ref.symbol} ошибка источника`);
     }
     scanState.candidates_done = processed;
@@ -688,8 +719,17 @@ async function runScanOnce(): Promise<ScanResult> {
   }
 
   const ids: number[] = [];
-  for (const { ref, res } of passed.slice(0, MAX_PER_SCAN)) {
-    ids.push(insertSignal(ref, res, now));
+  for (const { ref, res, ev } of passed.slice(0, MAX_PER_SCAN)) {
+    const id = insertSignal(ref, res, now);
+    ids.push(id);
+    // Сигнал помнит, чем вызван: событие ссылается на него (signal_id) и переходит
+    // в статус signaled. Коды подтягиваются в DTO сигнала (см. index.ts).
+    if (ev) markEvents(ev.eventIds, "signaled", id);
+  }
+  // События, прошедшие слои, но не попавшие в потолок сигналов за проход, —
+  // помечаем checked: они проверены, сигналом не стали (не отказ рынка).
+  for (const { ev } of passed.slice(MAX_PER_SCAN)) {
+    if (ev) markEvents(ev.eventIds, "checked");
   }
 
   // Финал: состояние замирает в «завершено» с итогом последнего скана, чтобы

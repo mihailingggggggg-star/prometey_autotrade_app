@@ -104,6 +104,8 @@ export interface JupiterToken {
   holders_change_24h_pct: number | null;
   /** Изменение ликвидности пула за 24ч, %. */
   liquidity_change_24h_pct: number | null;
+  /** Изменение цены за 24ч, % (stats24h.priceChange). null — нет данных. */
+  price_change_24h_pct: number | null;
   /** Теги Jupiter (verified, meme, community, rwa, stocks…). */
   tags: string[];
   /** Органичность 0..100 (0 у ярлыка «low»). */
@@ -156,6 +158,7 @@ function toToken(raw: JupiterTokenRaw, nowMs: number): JupiterToken | null {
     holder_count: num(raw.holderCount),
     holders_change_24h_pct: optNum(s.holderChange),
     liquidity_change_24h_pct: optNum(s.liquidityChange),
+    price_change_24h_pct: optNum(s.priceChange),
     tags: Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === "string") : [],
     organic_score: optNum(raw.organicScore),
     organic_label: typeof raw.organicScoreLabel === "string" && raw.organicScoreLabel ? raw.organicScoreLabel : null,

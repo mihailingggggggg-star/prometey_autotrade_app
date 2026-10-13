@@ -6,3 +6,9 @@ dist/
 !.env.example
 .DS_Store
 data/
+
+# Локальные настройки инструментов
+.claude/
+.continue/
+.continueignore
+.goosehints
