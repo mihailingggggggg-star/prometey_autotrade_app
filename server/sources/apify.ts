@@ -38,6 +38,20 @@ const DAY_S = 86_400;
 /** Источник упоминания (пока только X). */
 const SOURCE_X = "x";
 
+/**
+ * Сколько ПОДРЯД пустых сборов считаем «источник молчит». На тарифе FREE у
+ * Apify лимит не только по деньгам, но и по ЧИСЛУ ЗАПУСКОВ в месяц: при
+ * исчерпании актор отдаёт HTTP 200 и массив заглушек `{noResults:…}` — это
+ * выглядит как «нет упоминаний», хотя источник недоступен и лимит жжётся зря.
+ */
+export const APIFY_EMPTY_STREAK_LIMIT = 3;
+/** Сколько держим актор выключенным после «молчания» (сутки), сек. */
+const APIFY_SILENT_S = 86_400;
+const KEY_EMPTY_STREAK = "apify:empty_streak";
+const KEY_SILENT_UNTIL = "apify:silent_until";
+/** Единая честная причина для журнала и слоя 5. */
+const SILENT_NOTE = "нет данных: источник недоступен (источник молчит: возможно, исчерпан лимит запусков Apify)";
+
 /** Нормализованное упоминание — единый вид для БД, оценки и слоя 5. */
 export interface Mention {
   ts: number;
@@ -83,6 +97,49 @@ function addSpent(items: number, atSec = nowSec()): void {
   if (items <= 0) return;
   const key = `apify:spent:${dayKey(atSec)}`;
   metaSet(key, String(spentToday(atSec) + items));
+}
+
+/* ─────────────── «молчащий» источник ─────────────── */
+
+/** Сколько пустых сборов подряд (в meta; ключ общий на аккаунт, а не на монету). */
+function emptyStreak(): number {
+  const n = Number(metaGet(KEY_EMPTY_STREAK) ?? "0");
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** До какого времени (сек UTC) актор выключен; 0 — включён. */
+function silentUntil(): number {
+  const n = Number(metaGet(KEY_SILENT_UNTIL) ?? "0");
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Сбор реально вернул публикации — сбрасываем «молчание». */
+function noteRealRun(): void {
+  metaSet(KEY_EMPTY_STREAK, "0");
+  metaSet(KEY_SILENT_UNTIL, "0");
+}
+
+/** Пустой сбор: считаем серию; на пороге — глушим актор на сутки. */
+function noteEmptyRun(atSec = nowSec()): void {
+  const next = emptyStreak() + 1;
+  if (next >= APIFY_EMPTY_STREAK_LIMIT) {
+    metaSet(KEY_EMPTY_STREAK, "0");
+    metaSet(KEY_SILENT_UNTIL, String(atSec + APIFY_SILENT_S));
+  } else {
+    metaSet(KEY_EMPTY_STREAK, String(next));
+  }
+}
+
+/**
+ * Заглушка актора «нет результатов»: объект с полем noResults и БЕЗ текста.
+ * Такие строки — не публикации, а признак недоступного источника.
+ */
+export function isNoResultsStub(r: unknown): boolean {
+  if (!r || typeof r !== "object") return false;
+  const o = r as Record<string, unknown>;
+  if (!("noResults" in o)) return false;
+  const text = String(pick(o, ["text", "full_text", "fullText", "tweetText", "content", "body"]) ?? "").trim();
+  return text.length === 0;
 }
 
 /** Небольшой стабильный хэш FNV-1a — для суррогатного идентификатора упоминания. */
@@ -342,6 +399,15 @@ export async function getMedia(ref: SourceRef, now = nowSec()): Promise<MediaRes
     return { mentions: cachedMentions(mint, now), available: false, note, source: "none" };
   }
 
+  // Источник «молчит»: подряд прошло APIFY_EMPTY_STREAK_LIMIT пустых сборов (или
+  // актор отдавал только заглушки). Лимит запусков в месяц не жжём: актор НЕ
+  // запускаем сутки, причину пишем честно.
+  const silentTo = silentUntil();
+  if (silentTo > now) {
+    console.error(`[media] ${SILENT_NOTE} — актор не запускаю (${ref.symbol})`);
+    return { mentions: cachedMentions(mint, now), available: false, note: SILENT_NOTE, source: "none" };
+  }
+
   const perRun = Math.max(0, getEnvNum("APIFY_MAX_ITEMS")) || 50;
   const want = daily > 0 ? Math.max(1, Math.min(perRun, daily - spent)) : perRun;
 
@@ -357,11 +423,23 @@ export async function getMedia(ref: SourceRef, now = nowSec()): Promise<MediaRes
     storeMentions(mint, mentions);
     // Платим за реально собранные публикации (заглушки бесплатны и не считаются).
     addSpent(hasData ? Math.min(mentions.length, want) : 0, now);
+    // Серия пустых сборов: реальные публикации — сброс, пустота — счёт до порога.
+    if (hasData) noteRealRun();
+    else noteEmptyRun(now);
+    const stubOnly = !hasData && items.length > 0 && items.every(isNoResultsStub);
     const note = hasData
       ? `собрано ${mentions.length} публикаций`
-      : "источник ничего не вернул (нет результатов) — данных о соцсетях нет";
+      : silentUntil() > now
+        ? SILENT_NOTE
+        : stubOnly
+          ? "нет данных: источник недоступен (актор вернул заглушки без публикаций)"
+          : "нет данных: источник ничего не вернул (нет результатов)";
     setStatus(mint, SOURCE_X, now, hasData ? mentions.length : -1, note);
-    audit("media.collect", { mint, symbol: ref.symbol, items: mentions.length, spent: spentToday(now) }, "media");
+    audit(
+      "media.collect",
+      { mint, symbol: ref.symbol, items: mentions.length, stub_only: stubOnly, silent: silentUntil() > now, spent: spentToday(now) },
+      "media",
+    );
     return { mentions, available: hasData, note, source: hasData ? "apify" : "none" };
   } catch (e) {
     const note = e instanceof Error ? e.message : String(e);

@@ -23,7 +23,7 @@ import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { ChevronRight, Plus, Radar, RefreshCw } from "lucide-react";
 import {
-  addDeposit, analyticsSummary, getSettings, listPositions, listSignals, listTrades, scan,
+  addDeposit, analyticsSummary, getSettings, listPositions, listSignals, listTrades,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
 import type { DataMode, Position } from "../../shared/types";
@@ -31,6 +31,7 @@ import { Aurora, Glass, GroupLabel, Press, Row, Segmented, Sheet, Title, tone } 
 import { SignalCard } from "../ui/SignalCard";
 import { TokenLogo } from "../ui/TokenLogo";
 import { DemoBanner, ErrorBox, Loading } from "../ui/states";
+import { ScanProgress } from "../ui/ScanProgress";
 import { money as fmtMoney, pct, plural, price as fmtPrice, rr } from "../lib/format";
 import type { CoinRef } from "./CoinDetail";
 
@@ -78,6 +79,9 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
   const [detail, setDetail] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Открыт ли визуализатор поиска: скан длится минутами, и человек должен видеть
+  // фазу, счётчики и отбраковку, а не один спиннер.
+  const [scanOpen, setScanOpen] = useState(false);
 
   /* Агрегаты периода — из закрытых сделок. Поле `closed_ts` решает, в какой
      период попадает сделка; открытые в расчёт не входят — у них нет результата. */
@@ -126,12 +130,7 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
     return `Демо-баланс пополнен на ${fmtMoney(usd).replace("+", "")}`;
   });
 
-  const runScan = () => run("scan", async () => {
-    const res = await scan();
-    return res.found > 0
-      ? `скан нашёл ${res.found} новых сигналов`
-      : "скан не нашёл новых монет — попробуйте позже";
-  });
+  const runScan = () => { setNotice(null); setScanOpen(true); };
 
   return (
     <div className="pb-2">
@@ -200,7 +199,7 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
         <QuickAction icon={<Plus size={19} />} label="Пополнить" tint="var(--tint)"
                      busy={busy === "topup"} onClick={topUp} />
         <QuickAction icon={<Radar size={19} />} label="Сканировать" tint="var(--green)"
-                     busy={busy === "scan"} onClick={runScan} />
+                     busy={scanOpen} onClick={runScan} />
         <QuickAction icon={<RefreshCw size={19} />} label="Обновить" tint="var(--label-2)"
                      onClick={() => { setNotice(null); onChanged(); }} />
       </div>
@@ -224,7 +223,7 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
             <span className="flex-1 text-[14px] leading-snug" style={{ color: "var(--label-2)" }}>
               Сигналов пока нет — запустите скан, он поищет монеты в фазе накопления.
             </span>
-            <Press onClick={runScan} disabled={busy === "scan"} className="shrink-0">
+            <Press onClick={runScan} disabled={scanOpen} className="shrink-0">
               <Glass flat className="px-4 py-2 text-[14px] font-semibold">Сканировать</Glass>
             </Press>
           </Glass>
@@ -308,6 +307,12 @@ export function Home({ refreshKey, onOpen, onChanged, mode }: {
           </p>
         </div>
       </Sheet>
+
+      {/* ── Визуализатор поиска ──────────────────────────────────────────── */}
+      {/* Наложение поверх Главной: фаза, счётчики, отбраковка по слоям. Само
+          наложение запускает POST /api/scan и опрашивает /api/scan/status, а по
+          завершении просит перечитать данные (onDone). */}
+      <ScanProgress open={scanOpen} onClose={() => setScanOpen(false)} onDone={onChanged} />
 
       <div style={{ height: "calc(var(--safe-b) + 8px)" }} />
     </div>

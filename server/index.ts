@@ -40,7 +40,7 @@ import {
   audit,
   type SignalRow,
 } from "./db.ts";
-import { runScan } from "./screener.ts";
+import { runScan, getScanStatus } from "./screener.ts";
 import {
   openPosition,
   addToPosition,
@@ -386,6 +386,14 @@ const routes: Route[] = [
     method: "POST",
     pattern: "/api/scan",
     handler: async (): Promise<ScanResult> => runScan(),
+  },
+  {
+    method: "GET",
+    pattern: "/api/scan/status",
+    // Дешёвый статус текущего (или последнего) скана: без сети и побочных
+    // эффектов. Нужен визуализатору поиска — по одному спиннеру не понять,
+    // идёт работа или всё зависло.
+    handler: () => getScanStatus(),
   },
   {
     method: "POST",

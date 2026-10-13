@@ -113,6 +113,27 @@ export interface SignalDetail {
   social: Social;
 }
 
+/**
+ * Состояние текущего скана — то, что показывает визуализатор поиска.
+ * Живёт в общем контракте: сервер отдаёт, клиент рисует прогресс и фазы.
+ */
+export interface ScanStatus {
+  running: boolean;
+  started_ts: number;
+  /** Человекочитаемая фаза: «собираю кандидатов», «проверяю накопление» и т. д. */
+  stage: string;
+  candidates_total: number;
+  candidates_done: number;
+  signals_found: number;
+  /** Сколько отбраковано каждым слоем воронки. */
+  by_layer: Record<string, number>;
+  budget_used: number;
+  budget_total: number;
+  elapsed_ms: number;
+  /** Последнее, что происходило: «MINI: проверяю накопление». */
+  last_note: string;
+}
+
 export interface ScanResult {
   found: number;
   ids: number[];

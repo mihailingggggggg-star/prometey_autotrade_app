@@ -5,7 +5,7 @@
  * под ним или live. Сигнал создаётся только когда слои 1–4 пройдены, а слой 5
  * даёт sentiment >= 6 и is_organic === true. При сбое LLM сигнал НЕ создаётся.
  */
-import { ensureClock, worldStart, virtualNow, getSettings, getDb, audit } from "./db.ts";
+import { ensureClock, worldStart, virtualNow, nowSec, getSettings, getDb, audit } from "./db.ts";
 import { readDataMode, getEnvNum, getEnv } from "./config.ts";
 import {
   createMockSource,
@@ -171,6 +171,8 @@ async function screenCandidate(
   const isLive = src.mode === "live";
   const checks: Check[] = [];
 
+  // Фаза «безопасность контракта» — слой 1 (RugCheck + Jupiter).
+  noteStage("проверяю безопасность контракта", ref);
   // Слой 1 — RugCheck + перекрёстная проверка прав минта/фриза по Jupiter.
   const rug = await src.rug(ref);
   // Порог 70% — решение владельца (см. BURNED_LIQ_MIN_PCT выше).
@@ -225,9 +227,11 @@ async function screenCandidate(
   const gateOpen = ok1 && ok3;
   let holders: HolderData;
   if (gateOpen) {
+    noteStage("считаю концентрацию держателей", ref);
     holders = await src.holders(ref, now);
     if (isLive) {
       // Свечи — и дневные, и добор часовых при коротком дневном ряде (см. dexDailyCandles).
+      noteStage("проверяю накопление", ref);
       const acc = accumulationFromDaily(await dexDailyCandles(ref));
       market.range_pct = acc.range_pct;
       market.drawdown_from_ath_pct = acc.drawdown_pct;
@@ -368,6 +372,7 @@ async function screenCandidate(
   let social: SocialData;
   let overview_ru = "";
   if (socialEligible) {
+    noteStage("собираю упоминания", ref);
     social = await src.social(ref, market, now);
     overview_ru = await src.overview(ref, market);
   } else {
@@ -450,6 +455,107 @@ function fmtDbg(v: Check["value"]): string {
   return String(v);
 }
 
+/* ─────────────── состояние скана (визуализатор) ─────────────── */
+
+/**
+ * Живое состояние текущего скана. Скан длится от минуты до восьми, и по одному
+ * спиннеру нельзя понять, идёт работа или всё зависло. Это состояние читает
+ * дешёвый GET /api/scan/status: без сети и без побочных эффектов.
+ *
+ * Один скан одновременно (см. runScan), поэтому состояние одно на процесс.
+ * Значения честные: чего не измеряли — того не показываем (нет выдуманных %).
+ */
+export interface ScanStatus {
+  running: boolean;
+  /** Начало скана, сек UTC (0 — ни разу не запускался). */
+  started_ts: number;
+  /** Человекочитаемая фаза: «собираю кандидатов», «проверяю накопление»… */
+  stage: string;
+  /** Сколько кандидатов нашли в этой порции выборки. */
+  candidates_total: number;
+  /** Сколько уже проверено. */
+  candidates_done: number;
+  /** Сколько сигналов уже найдено. */
+  signals_found: number;
+  /** Сколько кандидатов отбраковано каждым слоем (1–5, budget, error). */
+  by_layer: Record<string, number>;
+  /** Израсходовано сетевых запросов за скан. */
+  budget_used: number;
+  /** Потолок сетевых запросов на скан (MAX_SCAN_REQUESTS). */
+  budget_total: number;
+  /** Прошедшее время скана, мс (у завершённого — заморожено). */
+  elapsed_ms: number;
+  /** Последняя строка о том, что происходит (например «MINI: проверяю накопление»). */
+  last_note: string;
+}
+
+interface ScanState extends ScanStatus {
+  /** Монотонный старт для живого elapsed_ms; наружу не отдаётся. */
+  started_ms: number;
+}
+
+const scanState: ScanState = {
+  running: false,
+  started_ts: 0,
+  started_ms: 0,
+  stage: "не запускался",
+  candidates_total: 0,
+  candidates_done: 0,
+  signals_found: 0,
+  by_layer: {},
+  budget_used: 0,
+  budget_total: MAX_SCAN_REQUESTS,
+  elapsed_ms: 0,
+  last_note: "",
+};
+
+/** Снимок состояния скана для /api/scan/status. elapsed и бюджет — живые. */
+export function getScanStatus(): ScanStatus {
+  return {
+    running: scanState.running,
+    started_ts: scanState.started_ts,
+    stage: scanState.stage,
+    candidates_total: scanState.candidates_total,
+    candidates_done: scanState.candidates_done,
+    signals_found: scanState.signals_found,
+    by_layer: { ...scanState.by_layer },
+    budget_used: scanState.running ? requestCount() : scanState.budget_used,
+    budget_total: scanState.budget_total,
+    elapsed_ms: scanState.running ? Date.now() - scanState.started_ms : scanState.elapsed_ms,
+    last_note: scanState.last_note,
+  };
+}
+
+/** Начать скан: состояние сбрасывается СИНХРОННО (до первого await), чтобы
+ *  опрос статуса сразу видел running=true, а не итог прошлого скана. */
+function beginScanState(): void {
+  scanState.running = true;
+  scanState.started_ts = nowSec();
+  scanState.started_ms = Date.now();
+  scanState.stage = "собираю кандидатов";
+  scanState.candidates_total = 0;
+  scanState.candidates_done = 0;
+  scanState.signals_found = 0;
+  scanState.by_layer = {};
+  scanState.budget_used = 0;
+  scanState.elapsed_ms = 0;
+  scanState.last_note = "собираю кандидатов…";
+}
+
+/** Скан упал целиком — закрываем состояние, чтобы не «висеть» в running. */
+function failScanState(): void {
+  scanState.running = false;
+  scanState.stage = "завершено";
+  scanState.elapsed_ms = Date.now() - scanState.started_ms;
+  scanState.last_note = "скан прерван ошибкой источника";
+}
+
+/** Отметить фазу обработки текущего кандидата. */
+function noteStage(stage: string, ref: SourceRef): void {
+  scanState.stage = stage;
+  scanState.last_note = `${ref.symbol}: ${stage}`;
+}
+
 let scanInFlight: Promise<ScanResult> | null = null;
 
 /**
@@ -461,10 +567,16 @@ let scanInFlight: Promise<ScanResult> | null = null;
  * лимиты и кредит. Второй вызов просто дожидается первого и получает его итог.
  */
 export async function runScan(): Promise<ScanResult> {
+  // Идущий скан важнее нового запроса: отдаём его же статус и итог. Состояние
+  // при этом отражает ИДУЩИЙ скан (beginScanState не трогаем).
   if (scanInFlight) return scanInFlight;
+  beginScanState();
   scanInFlight = runScanOnce();
   try {
     return await scanInFlight;
+  } catch (e) {
+    failScanState();
+    throw e;
   } finally {
     scanInFlight = null;
   }
@@ -483,6 +595,7 @@ async function runScanOnce(): Promise<ScanResult> {
   const startedAt = Date.now();
   const maxMs = getEnvNum("SCAN_MAX_MS") || MAX_SCAN_MS;
   const candidates = await src.listCandidates();
+  scanState.candidates_total = candidates.length;
   // Лог планового (и ручного) скана: какую порцию выборки взяли. Нужен, чтобы
   // владелец видел, что воронка ходит по кругу, а не жуёт один и тот же топ.
   const rot = getLastCandidateRotation();
@@ -505,6 +618,7 @@ async function runScanOnce(): Promise<ScanResult> {
     // минут; что наступит раньше — то и остановит скан.
     if (requestCount() >= MAX_SCAN_REQUESTS || Date.now() - startedAt >= maxMs) {
       rejected["budget"] = candidates.length - processed;
+      scanState.last_note = "лимит запросов/времени скана исчерпан — остаток отложен";
       break;
     }
     processed++;
@@ -512,6 +626,7 @@ async function runScanOnce(): Promise<ScanResult> {
       const res = await screenCandidate(src, ref, now, s.screener);
       if (res.open_signal) {
         passed.push({ ref, res });
+        scanState.signals_found++;
         if (debug) console.error(`[скан] СИГНАЛ ${ref.symbol}`);
       } else {
         const fail = firstFailCheck(res.checks);
@@ -532,12 +647,28 @@ async function runScanOnce(): Promise<ScanResult> {
       rejected["error"] = (rejected["error"] ?? 0) + 1;
       if (debug) console.error(`[скан] ОТБРАКОВКА ${ref.symbol} ошибка источника`);
     }
+    scanState.candidates_done = processed;
+    scanState.by_layer = { ...rejected };
   }
 
   const ids: number[] = [];
   for (const { ref, res } of passed.slice(0, MAX_PER_SCAN)) {
     ids.push(insertSignal(ref, res, now));
   }
+
+  // Финал: состояние замирает в «завершено» с итогом последнего скана, чтобы
+  // GET /api/scan/status и после работы отдавал понятный результат.
+  scanState.running = false;
+  scanState.stage = "завершено";
+  scanState.candidates_done = processed;
+  scanState.signals_found = ids.length;
+  scanState.by_layer = { ...rejected };
+  scanState.budget_used = requestCount();
+  scanState.elapsed_ms = Date.now() - startedAt;
+  scanState.last_note =
+    ids.length > 0
+      ? `завершено: найдено ${ids.length}, проверено ${processed}`
+      : `завершено: сигналов нет, проверено ${processed} кандидатов`;
 
   // rejected_by_layer остаётся числами по слоям + ключ by_check: разбивка
   // отбраковок по КОДУ проверки (какой чек рубит воронку). Имена слоёв и

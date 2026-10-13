@@ -41,7 +41,7 @@ const ENV_KEYS = [
 
 function resetMedia(): void {
   getDb().exec(
-    "DELETE FROM mentions; DELETE FROM media_status; DELETE FROM meta WHERE key LIKE 'apify:spent:%';",
+    "DELETE FROM mentions; DELETE FROM media_status; DELETE FROM meta WHERE key LIKE 'apify:%';",
   );
 }
 
@@ -147,6 +147,73 @@ test("медиаслой: суточный бюджет публикаций н�
       assert.equal(b.available, false);
       assert.match(b.note, /бюджет/i, "исчерпание бюджета — понятная причина, не блокирует скан");
       assert.equal(countMentions(), 3, "собрано ровно в пределах суточного лимита");
+    },
+  );
+});
+
+/* ─────────── 2b. Защита от «молчащего» Apify ─────────── */
+
+test("медиаслой: заглушки noResults не считаются данными и не списывают бюджет", async () => {
+  resetMedia();
+  process.env.APIFY_TOKEN = "TEST";
+  process.env.APIFY_DAILY_ITEMS = "1000";
+  process.env.APIFY_MAX_ITEMS = "50";
+  process.env.MEDIA_TTL_MIN = "30";
+  let calls = 0;
+  await withFetch(
+    // Ровно как актор при исчерпанном лимите запусков (тариф FREE): HTTP 200 и
+    // массив заглушек. Это ОТСУТСТВИЕ данных, а не «нет упоминаний».
+    async () => {
+      calls++;
+      return jsonResp(Array.from({ length: 10 }, () => ({ noResults: "no results found" })));
+    },
+    async () => {
+      const r = await getMedia(ref("STUB_MINT", "STB"));
+      assert.equal(calls, 1, "актор запущен один раз");
+      assert.equal(r.available, false, "заглушки — не данные");
+      assert.equal(r.mentions.length, 0, "публикаций нет");
+      assert.match(r.note, /недоступ/i, "причина честная: источник недоступен");
+      assert.equal(countMentions(), 0, "в журнал упоминаний ничего не попало");
+      // Суточный бюджет за заглушки НЕ списывается: ключа расхода нет вовсе.
+      const spentKeys = (
+        getDb().prepare("SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'apify:spent:%'").get() as { n: number }
+      ).n;
+      assert.equal(spentKeys, 0, "бюджет не тронут заглушками");
+      // В media_status — «не данные» (items=-1), а не «собрано 10».
+      const row = getDb().prepare("SELECT items FROM media_status WHERE mint=?").get("STUB_MINT") as { items: number };
+      assert.equal(row.items, -1, "заглушки не записаны как собранные публикации");
+    },
+  );
+});
+
+test("медиаслой: три пустых сбора подряд глушат актор, причина видна", async () => {
+  resetMedia();
+  process.env.APIFY_TOKEN = "TEST";
+  process.env.APIFY_DAILY_ITEMS = "1000";
+  process.env.APIFY_MAX_ITEMS = "50";
+  process.env.MEDIA_TTL_MIN = "30";
+  let calls = 0;
+  await withFetch(
+    async () => {
+      calls++;
+      return jsonResp([]);
+    },
+    async () => {
+      // Три пустых сбора подряд — три запуска, все «нет данных».
+      assert.equal((await getMedia(ref("SIL_A", "A"))).available, false);
+      assert.equal((await getMedia(ref("SIL_B", "B"))).available, false);
+      assert.equal((await getMedia(ref("SIL_C", "C"))).available, false);
+      assert.equal(calls, 3, "три пустых сбора — три запуска актора");
+
+      // Четвёртый сбор: источник молчит — актор НЕ запускается, причина видна.
+      const d = await getMedia(ref("SIL_D", "D"));
+      assert.equal(calls, 3, "после порога актор не запускается");
+      assert.equal(d.available, false);
+      assert.match(d.note, /молчит/i, "причина видна словами");
+      const until = Number(
+        (getDb().prepare("SELECT value FROM meta WHERE key='apify:silent_until'").get() as { value: string }).value,
+      );
+      assert.ok(until > Math.floor(Date.now() / 1000), "актор выключен на будущее время (сутки)");
     },
   );
 });

@@ -10,6 +10,7 @@
  */
 import "./_setup.ts";
 import "./screener.test.ts";
+import "./scan_progress.test.ts";
 import "./engine.test.ts";
 import "./keys.test.ts";
 import "./routes.test.ts";

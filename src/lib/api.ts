@@ -11,12 +11,10 @@
  * туннель, когда интерфейс и сервер живут на разных адресах. Хардкода адреса нет
  * нигде: сменный адрес — это ровно то место, где он ломается молча.
  */
-import type {
-  Health, Signal, SignalDetail, SignalStatus, ScanResult, Candle, ChartTf,
+import type {Health, Signal, SignalDetail, SignalStatus, ScanResult, Candle, ChartTf,
   Position, PositionStatus, Trade, AnalyticsSummary, Settings, SettingsPatch,
   KeysStatus, KeysUpdate, Alert, AuditEntry, OpenPositionRequest, Fill,
-  ApiErrorBody,
-} from "../../shared/types";
+  ApiErrorBody, ScanStatus } from "../../shared/types";
 
 /** Базовый адрес API: ключ `solana.api` из localStorage либо тот же origin. */
 export function apiBase(): string {
@@ -172,6 +170,19 @@ export const listSignals = (opts: { limit?: number; status?: SignalStatus } = {}
 export const getSignal = (id: number) => call<SignalDetail>(`/api/signals/${id}`);
 
 export const scan = () => call<ScanResult>("/api/scan", { method: "POST" });
+
+/* ── прогресс скана ── */
+
+/**
+ * Живое состояние скана (GET /api/scan/status). Отдельный эндпоинт: показывает
+ * фазу, счётчики и отбраковку, чтобы по одному спиннеру не гадать, идёт работа
+ * или всё зависло. В shared/types.ts его нет (файл заморожен) — тип живёт здесь.
+ */
+/* Тип живёт в общем контракте (shared/types.ts), здесь — только реэкспорт:
+   экраны импортируют его из клиента и не знают про внутреннее расположение. */
+export type { ScanStatus } from "../../shared/types";
+
+export const scanStatus = () => call<ScanStatus>("/api/scan/status");
 
 /* ── свечи ── */
 export const candles = (token: string, tf: ChartTf, limit = 300) =>
