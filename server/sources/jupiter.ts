@@ -83,6 +83,7 @@ interface JupiterTokenRaw {
   organicScoreLabel?: string | null;
   audit?: JupiterAudit | null;
   stats24h?: JupiterStats | null;
+  tags?: string[] | null;
 }
 
 /** Токен вселенной, приведённый к нашим полям. null — «измерить нельзя». */
@@ -103,6 +104,8 @@ export interface JupiterToken {
   holders_change_24h_pct: number | null;
   /** Изменение ликвидности пула за 24ч, %. */
   liquidity_change_24h_pct: number | null;
+  /** Теги Jupiter (verified, meme, community, rwa, stocks…). */
+  tags: string[];
   /** Органичность 0..100 (0 у ярлыка «low»). */
   organic_score: number | null;
   /** Ярлык органичности Jupiter: low/medium/high. */
@@ -153,6 +156,7 @@ function toToken(raw: JupiterTokenRaw, nowMs: number): JupiterToken | null {
     holder_count: num(raw.holderCount),
     holders_change_24h_pct: optNum(s.holderChange),
     liquidity_change_24h_pct: optNum(s.liquidityChange),
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === "string") : [],
     organic_score: optNum(raw.organicScore),
     organic_label: typeof raw.organicScoreLabel === "string" && raw.organicScoreLabel ? raw.organicScoreLabel : null,
     // topHoldersPercentage приходит УЖЕ в процентах (0..100), не долей.

@@ -24,3 +24,4 @@ import "./jupiter.test.ts";
 import "./thresholds.test.ts";
 import "./media.test.ts";
 import "./refine.test.ts";
+import "./scan_diagnose.test.ts";

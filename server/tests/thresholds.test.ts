@@ -447,8 +447,11 @@ test("бюджет скана: при обилии кандидатов оста
       assert.equal(typeof r.found, "number");
       assert.ok((r.rejected_by_layer["budget"] ?? 0) >= 1, "при обилии кандидатов остаток обязан уйти в budget");
       assert.ok(requestCount() <= MAX_SCAN_REQUESTS + 12, `запросов ${requestCount()} при бюджете ${MAX_SCAN_REQUESTS}`);
-      // Потолок кандидатов соблюдён: обработанных не больше потолка.
-      const processed = Object.values(r.rejected_by_layer).reduce((a, b) => a + b, 0);
+      // Потолок кандидатов соблюдён: обработанных не больше потолка. Суммируем
+      // только числовые слои — ключ by_check (разбивка по коду проверки) не число.
+      const processed = Object.values(r.rejected_by_layer)
+        .filter((v): v is number => typeof v === "number")
+        .reduce((a, b) => a + b, 0);
       assert.ok(processed <= MAX_CANDIDATES, `обработано ${processed} > потолка ${MAX_CANDIDATES}`);
     },
   );

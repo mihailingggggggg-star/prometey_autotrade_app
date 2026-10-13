@@ -231,11 +231,12 @@ test("медиаслой: без ключа Apify — «нет ключа» и �
     },
   );
 
-  // Живой скан без ключей Apify/Gemini: кандидат должен дойти до сигнала —
-  // проверка слоя 5 видна, но не блокирует.
+  // Живой скан без ключей Apify/Gemini, но с ВКЛЮЧЁННЫМ фильтром: кандидат
+  // должен дойти до сигнала — проверка слоя 5 видна, но не блокирует.
   process.env.DATA_MODE = "live";
   delete process.env.FLUX_RPC_URL;
   cacheClear();
+  setSettings({ ...DEFAULT_SETTINGS, screener: { ...DEFAULT_SETTINGS.screener, llm_filter: true } });
   const nowMs = Date.now();
   const nowS = Math.floor(nowMs / 1000);
   const DAY = 86_400_000;
@@ -307,6 +308,27 @@ test("медиаслой: без ключа Apify — «нет ключа» и �
       assert.equal(m!.ok, true, "без данных проверка не блокирует");
       assert.equal(m!.value, null, "значение честно null");
       assert.match(m!.threshold, /нет ключа/i);
+    },
+  );
+});
+
+test("медиаслой: фильтр по новостям выключен по умолчанию и включается настройкой", async () => {
+  process.env.DATA_MODE = "live";
+  delete process.env.APIFY_TOKEN;
+  resetMedia();
+  cacheClear();
+  setSettings(DEFAULT_SETTINGS);
+  assert.equal(DEFAULT_SETTINGS.screener.llm_filter, false, "по умолчанию фильтр выключен");
+
+  // С выключенным фильтром сбор не запускается вовсе — сеть не должна дёргаться.
+  await withFetch(
+    async (url) => {
+      throw new Error("сеть не должна использоваться при выключенном фильтре: " + url);
+    },
+    async () => {
+      const s = await assessSocial(ref("OFF_MINT", "OFF"));
+      assert.equal(s.media_mentions_24h ?? null, null);
+      assert.equal(s.mentions.length, 0);
     },
   );
 });

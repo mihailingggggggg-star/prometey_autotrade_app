@@ -348,13 +348,21 @@ export async function getMedia(ref: SourceRef, now = nowSec()): Promise<MediaRes
   try {
     const items = await runActor(searchTerms(ref), want);
     const mentions = parseItems(items, now);
+    // Актор умеет отвечать «нет результатов» массивом заглушек (по 10 строк вида
+    // {noResults: …}) — и раньше мы считали их собранными публикациями: в журнал
+    // попадало «собрано 10», бюджет списывался, а список упоминаний оставался
+    // пустым. Из-за этого слой 5 судил об органичности по пустоте и отбраковывал
+    // кандидатов ложно. Заглушки — это ОТСУТСТВИЕ данных, а не ноль упоминаний.
+    const hasData = mentions.length > 0;
     storeMentions(mint, mentions);
-    // Платим за СОБРАННЫЕ публикации (не за запрошенный максимум).
-    addSpent(Math.min(items.length, want), now);
-    const note = `собрано ${items.length} публикаций`;
-    setStatus(mint, SOURCE_X, now, mentions.length, note);
-    audit("media.collect", { mint, symbol: ref.symbol, items: items.length, spent: spentToday(now) }, "media");
-    return { mentions, available: true, note, source: "apify" };
+    // Платим за реально собранные публикации (заглушки бесплатны и не считаются).
+    addSpent(hasData ? Math.min(mentions.length, want) : 0, now);
+    const note = hasData
+      ? `собрано ${mentions.length} публикаций`
+      : "источник ничего не вернул (нет результатов) — данных о соцсетях нет";
+    setStatus(mint, SOURCE_X, now, hasData ? mentions.length : -1, note);
+    audit("media.collect", { mint, symbol: ref.symbol, items: mentions.length, spent: spentToday(now) }, "media");
+    return { mentions, available: hasData, note, source: hasData ? "apify" : "none" };
   } catch (e) {
     const note = e instanceof Error ? e.message : String(e);
     // Честное состояние: фиксируем причину (items=-1 → «не данные»), скан не падает.

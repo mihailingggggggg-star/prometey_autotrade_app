@@ -6,7 +6,7 @@
  * даёт sentiment >= 6 и is_organic === true. При сбое LLM сигнал НЕ создаётся.
  */
 import { ensureClock, worldStart, virtualNow, getSettings, getDb, audit } from "./db.ts";
-import { readDataMode, getEnvNum } from "./config.ts";
+import { readDataMode, getEnvNum, getEnv } from "./config.ts";
 import {
   createMockSource,
   type DataSource,
@@ -25,6 +25,7 @@ import {
   listCandidates as dexListCandidates,
   setRangeDays,
   setCandidateFilter,
+  getLastCandidateRotation,
 } from "./sources/dexscreener.ts";
 import { rug as rugcheckRug } from "./sources/rugcheck.ts";
 import { holders as fluxHolders } from "./sources/helius.ts";
@@ -71,6 +72,13 @@ export const MAX_SCAN_REQUESTS = 220;
  * остановит скан; остаток кандидатов честно уходит в rejected_by_layer["budget"].
  */
 export const MAX_SCAN_MS = 480_000;
+
+/**
+ * Порог уникальных мейкеров для ЧАСТИЧНОЙ выборки сделок (последние ~300 из
+ * суточного объёма). Полный порог из настроек к такой выборке неприменим: он
+ * задан для суточного числа сделок, а не для трёхсот.
+ */
+export const MAKER_MIN_PARTIAL = 30;
 
 /**
  * Порог органичности Jupiter (organicScore 0..100) для ИНФОРМАЦИОННОЙ пометки
@@ -286,7 +294,13 @@ async function screenCandidate(
   // GeckoTerminal) → НЕ блокируем, value=null. Честный ноль мейкеров из
   // полученной выборки — блокируем как раньше (накрутка объёма).
   const makersNA = holders.makers_na === true;
-  const washOK = !s.wash_filter || makersNA || holders.makers_24h >= s.maker_min;
+  // Порог мейкеров задан для ПОЛНОГО суточного числа сделок. Когда выборка
+  // частичная (последние ~300 сделок из тысяч), требовать полный порог нельзя:
+  // за 300 сделок столько уникальных мейкеров не набирается физически, и монета
+  // отбраковывается за размер выборки, а не за накрутку (живые примеры: 83, 68,
+  // 51 при пороге 120). Для частичной выборки порог соразмерный.
+  const makerMin = holders.makers_partial ? MAKER_MIN_PARTIAL : s.maker_min;
+  const washOK = !s.wash_filter || makersNA || holders.makers_24h >= makerMin;
   // Органичность из Jupiter: ИНФОРМАЦИОННАЯ проверка, НЕ блокирует.
   // РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: ярлык «low» (score 0) — непрозрачный
   // показатель одного источника, и раньше он В ОДИНОЧКУ убивал кандидата, у
@@ -324,7 +338,9 @@ async function screenCandidate(
     ? "выключен"
     : makersNA
       ? holders.makers_note || "нет данных о сделках"
-      : `≥${s.maker_min}${holders.makers_partial ? " (частичная выборка)" : ""}`;
+      : holders.makers_partial
+        ? `≥${MAKER_MIN_PARTIAL} (частичная выборка ~300 сделок; полный порог ${s.maker_min} к ней неприменим)`
+        : `≥${s.maker_min}`;
   checks.push(
     chk(4, "wash_filter", "Защита от накрутки объёма", washOK, makersNA ? null : holders.makers_24h, makersThreshold),
   );
@@ -421,9 +437,17 @@ async function screenCandidate(
   };
 }
 
-function firstFailLayer(checks: Check[]): number | null {
-  for (const c of checks) if (!c.ok) return c.layer;
+/** Первый непрошедший чек — и слой, и КОД причины отбраковки (для лога/сводки). */
+function firstFailCheck(checks: Check[]): Check | null {
+  for (const c of checks) if (!c.ok) return c;
   return null;
+}
+
+/** Значение/порог для строки отладочного лога: null/undefined печатаем как есть. */
+function fmtDbg(v: Check["value"]): string {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  return String(v);
 }
 
 let scanInFlight: Promise<ScanResult> | null = null;
@@ -459,7 +483,17 @@ async function runScanOnce(): Promise<ScanResult> {
   const startedAt = Date.now();
   const maxMs = getEnvNum("SCAN_MAX_MS") || MAX_SCAN_MS;
   const candidates = await src.listCandidates();
+  // Лог планового (и ручного) скана: какую порцию выборки взяли. Нужен, чтобы
+  // владелец видел, что воронка ходит по кругу, а не жуёт один и тот же топ.
+  const rot = getLastCandidateRotation();
+  if (src.mode === "live" && rot && rot.total > 0) {
+    console.error(`[скан] кандидаты ${rot.from}–${rot.to} из ${rot.total}`);
+  }
+  // SCAN_DEBUG=1 — построчная причина отбраковки в stderr (по умолчанию выкл).
+  const debug = getEnv("SCAN_DEBUG") === "1";
   const rejected: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
+  // Счётчик отбраковок по КОДУ проверки (какой именно чек положил кандидата).
+  const byCheck: Record<string, number> = {};
   const passed: { ref: SourceRef; res: ScreenResult }[] = [];
 
   let processed = 0;
@@ -478,13 +512,25 @@ async function runScanOnce(): Promise<ScanResult> {
       const res = await screenCandidate(src, ref, now, s.screener);
       if (res.open_signal) {
         passed.push({ ref, res });
+        if (debug) console.error(`[скан] СИГНАЛ ${ref.symbol}`);
       } else {
-        const layer = firstFailLayer(res.checks) ?? 5;
+        const fail = firstFailCheck(res.checks);
+        const layer = fail?.layer ?? 5;
         rejected[String(layer)]++;
+        if (fail) {
+          byCheck[fail.code] = (byCheck[fail.code] ?? 0) + 1;
+          if (debug) {
+            console.error(
+              `[скан] ОТБРАКОВКА ${ref.symbol} слой ${fail.layer} ${fail.code}: значение ${fmtDbg(fail.value)}, порог ${fmtDbg(fail.threshold)}`,
+            );
+          }
+        }
       }
     } catch {
       // Один токен/источник упал — не рушим скан целиком, считаем отбраковкой.
+      // Текст ошибки НЕ печатаем (в нём могут быть адреса/параметры источника).
       rejected["error"] = (rejected["error"] ?? 0) + 1;
+      if (debug) console.error(`[скан] ОТБРАКОВКА ${ref.symbol} ошибка источника`);
     }
   }
 
@@ -493,8 +539,13 @@ async function runScanOnce(): Promise<ScanResult> {
     ids.push(insertSignal(ref, res, now));
   }
 
-  audit("scan", { found: ids.length, rejected, requests: requestCount(), ms: Date.now() - startedAt }, "screener");
-  return { found: ids.length, ids, rejected_by_layer: rejected };
+  // rejected_by_layer остаётся числами по слоям + ключ by_check: разбивка
+  // отбраковок по КОДУ проверки (какой чек рубит воронку). Имена слоёв и
+  // формат сохранены; by_check лишь добавлен рядом, чтобы причина причины была
+  // видна снаружи, без чтения логов.
+  const rejectedOut = { ...rejected, by_check: byCheck } as unknown as Record<string, number>;
+  audit("scan", { found: ids.length, rejected: rejectedOut, requests: requestCount(), ms: Date.now() - startedAt }, "screener");
+  return { found: ids.length, ids, rejected_by_layer: rejectedOut };
 }
 
 function insertSignal(ref: SourceRef, res: ScreenResult, now: number): number {

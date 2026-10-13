@@ -29,6 +29,7 @@
  * холдеров / органичность — из Jupiter (market/holders), см. screener.
  */
 import { netJson } from "./net.ts";
+import { metaGet, metaSet } from "../db.ts";
 import { ApiError } from "../config.ts";
 import { ohlcv, poolsForToken, newPools, trendingPools, topVolumePools, type GeckoPoolInfo } from "./geckoterminal.ts";
 import { jupiterUniverse, jupiterToken, type JupiterToken } from "./jupiter.ts";
@@ -135,6 +136,44 @@ function bestCachedPair(addr: string): DexPair | null {
   return hit && hit.exp > Date.now() ? hit.pair : null;
 }
 
+/* ─────────────── ротация выборки кандидатов ─────────────── */
+
+/**
+ * Ключ курсора ротации в таблице meta (БД): с какого индекса начинать следующую
+ * порцию. Хранение в БД, а не в памяти, — чтобы курсор пережил перезапуск службы.
+ */
+const CURSOR_KEY = "scan_candidate_cursor";
+
+/** Позиция последней выборки (1-based, включительно) — для лога планового скана. */
+let lastRotation: { from: number; to: number; total: number } | null = null;
+
+/** Прочитать курсор ротации; мусор/вне диапазона → 0 (начнём список сначала). */
+function readCursor(total: number): number {
+  const raw = metaGet(CURSOR_KEY);
+  const n = raw === null ? 0 : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n) % total;
+}
+
+/** Записать курсор ротации (лежит в meta — переживает перезапуск службы). */
+function writeCursor(v: number): void {
+  metaSet(CURSOR_KEY, String(v));
+}
+
+/** Взять `count` подряд идущих элементов начиная с `start`, по кругу. */
+function rotate<T>(arr: T[], start: number, count: number): T[] {
+  if (arr.length === 0 || count <= 0) return [];
+  const n = Math.min(count, arr.length);
+  const out: T[] = [];
+  for (let i = 0; i < n; i++) out.push(arr[(start + i) % arr.length]);
+  return out;
+}
+
+/** Какая порция кандидатов ушла в последний listCandidates (для лога). */
+export function getLastCandidateRotation(): { from: number; to: number; total: number } | null {
+  return lastRotation;
+}
+
 /* ─────────────── предфильтр кандидатов ─────────────── */
 
 interface Prefilter {
@@ -172,11 +211,26 @@ function passPrefilter(ageDays: number, liqUsd: number): boolean {
  * неизвестный возраст (не выдумываем 0), возраст/ликвидность вне настроек,
  * FDV выше потолка (гиганты) и нулевой суточный оборот (мёртвые монеты).
  */
+/**
+ * Теги Jupiter, которые выводят токен из нашей вселенной целиком.
+ *
+ * Живой скан показал, почему это необходимо: из 3965 «проверенных» токенов
+ * Jupiter 1999 — токенизированные акции и RWA (теги rwa/stocks/xstocks), и 56 из
+ * них попадали в наше окно ликвидности. Это бумаги на акции, выпущенные
+ * эмитентом: ликвидность пула у них не сжигается по природе, а «накопление» —
+ * это поведение фондового рынка, а не монеты. В отбраковке они выглядели как
+ * «сожжённая ликвидность 0 из 13 кандидатов» и съедали бюджет скана, пока
+ * настоящие монеты оставались непроверенными. Теперь их отсекает дешёвый
+ * предфильтр — до единого сетевого запроса.
+ */
+const EXCLUDED_TAGS = new Set(["rwa", "stocks", "xstocks", "prestocks"]);
+
 function jupiterPass(t: JupiterToken): boolean {
   if (t.age_days === null) return false;
   if (!passPrefilter(t.age_days, t.liq_usd)) return false;
   if (t.fdv_usd > FDV_CAP_USD) return false;
   if (t.volume_24h_usd <= 0) return false;
+  if (t.tags.some((tag) => EXCLUDED_TAGS.has(tag.toLowerCase()))) return false;
   return true;
 }
 
@@ -243,6 +297,9 @@ export async function listCandidates(): Promise<SourceRef[]> {
   const now = Date.now();
   const seen = new Set<string>();
   const out: SourceRef[] = [];
+  // Ротация начинается заново: если вселенную получить не удалось, не отдаём
+  // прошлогоднюю позицию как «текущую» (getLastCandidateRotation вернёт null).
+  lastRotation = null;
   const add = (ref: SourceRef): boolean => {
     if (!ref.token_addr || seen.has(ref.token_addr) || out.length >= MAX_CANDIDATES) return false;
     seen.add(ref.token_addr);
@@ -272,7 +329,19 @@ export async function listCandidates(): Promise<SourceRef[]> {
       });
     }
     pass.sort((a, b) => b.liq - a.liq); // крупнее пул — надёжнее исполнение
-    const probe = pass.slice(0, JUPITER_MINT_LIMIT);
+    // РОТАЦИЯ выборки: каждый следующий скан берёт СЛЕДУЮЩУЮ порцию ТОГО ЖЕ
+    // размера из стабильно отсортированного списка (по ликвидности), а не один
+    // и тот же топ. Курсор хранится в meta и переживает перезапуск службы; за
+    // ceil(total/portion) сканов (20 минут между ними) проверяются ВСЕ монеты
+    // окна, а не первые 40. Позиция видна в логе планового скана (см. screener).
+    const total = pass.length;
+    const portion = Math.min(mainQuota, JUPITER_MINT_LIMIT, total);
+    const start = total > 0 ? readCursor(total) : 0;
+    if (total > 0) {
+      lastRotation = { from: start + 1, to: start + portion, total };
+      writeCursor((start + portion) % total);
+    }
+    const probe = rotate(pass, start, portion);
     if (probe.length) {
       rememberBest(await pairsForAddrs(probe.map((p) => p.ref.token_addr)));
       for (const p of probe) {

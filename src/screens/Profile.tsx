@@ -257,7 +257,8 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
                 <ToggleRow label="Фильтр накрутки" hint="уникальные мейкеры против ботов"
                            on={draft.screener.wash_filter}
                            onChange={(v) => patch({ screener: { wash_filter: v } })} />
-                <ToggleRow label="Фильтр LLM" hint="Gemini оценивает органику и нарратив"
+                <ToggleRow label="Фильтр по новостям и упоминаниям"
+                           hint="Собирает упоминания в X (Apify) и оценивает интерес; без него слой 5 не проверяется и кредит Apify не тратится"
                            on={draft.screener.llm_filter}
                            onChange={(v) => patch({ screener: { llm_filter: v } })} />
               </Group>
