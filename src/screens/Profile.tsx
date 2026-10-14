@@ -1,73 +1,85 @@
 /**
- * Профиль (§9.5): ключи, настройки скринера и демо-движка, демо-баланс и журнал
- * действий.
+ * Кабинет (§9.5): профиль-карточка, капитал, группы настроек скринера и
+ * демо-движка, доступы (ключам/токен), демо-баланс и журнал действий.
+ *
+ * Форма — как в прежней, фьючерсной версии приложения: сверху высокая
+ * профиль-карточка, поверх её нижнего края заезжает карточка капитала, ниже
+ * идут группы-строки. Каждая строка открывает шторку с настройками.
+ *
+ * Почему настройки сохраняются ПО КНОПКЕ, а не сразу ползунком. Раньше каждое
+ * отпускание пальца отправляло PUT: собранная «пачка» из восьми подвижек — это
+ * восемь записей в журнал и восемь сетевых кругов, а случайный перетяг уже
+ * менял поведение бота. Теперь шторка держит ЛОКАЛЬНУЮ копию группы (`draft`),
+ * все правки идут в неё, и один запрос `updateSettings({<группа>: …})` уходит
+ * только по «Сохранить». Отказ сервера показывается прямо в шторке и НЕ
+ * закрывает её — человек видит, что именно не приняли, и правит; крестик/тап по
+ * фону откатывают черновик к состоянию сервера.
  *
  * Ключи. Значения НИКОГДА не приходят с сервера — только `set` и `preview`
- * (маска вида «abcd…12»). Поле «Сохранить» отправляет лишь то, что человек
- * реально ввёл: пустое поле означает «не трогать», а не «стереть». Так случайный
- * тап по «Сохранить» не затирает рабочий ключ.
- *
- * Настройки. Ползунок пишет на сервер только на ОТПУСКАНИИ пальца (см. Slider):
- * слать каждый пиксель перетяга — это десятки запросов на одно движение.
- * Локальная копия настроек даёт мгновенную реакцию интерфейса, а истина
- * по-прежнему на сервере (он валидирует диапазоны и пишет в audit).
+ * (маска «abcd…12»). Пустое поле означает «не трогать», а не «стереть»: так
+ * случайный тап по «Сохранить» не затирает рабочий ключ.
  */
-import { useEffect, useState } from "react";
-import { ClipboardList, KeyRound, Save } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
-  addDeposit, analyticsSummary, keysStatus, listAudit, getSettings, updateKeys, updateSettings,
-  hasToken, probeAuth, setToken, UnauthorizedError,
+  CalendarRange, ClipboardList, Filter, Gauge, History, KeyRound, Newspaper, Plug, Repeat,
+  Save, ShieldCheck, TrendingUp, Users, Wallet,
+} from "lucide-react";
+import {
+  addDeposit, analyticsSummary, getSettings, hasToken, health, keysStatus, listAudit,
+  probeAuth, setToken, updateKeys, updateSettings, UnauthorizedError,
 } from "../lib/api";
 import { useApi } from "../lib/useApi";
 import type { KeysUpdate, Settings, SettingsPatch } from "../../shared/types";
-import { Press, Title, Toggle } from "../ui/kit";
-import { Slider } from "../ui/liquid";
-import { ErrorBox, Loading, Panel } from "../ui/states";
-import { dt, money } from "../lib/format";
+import { Aurora, Glass, GroupLabel, Press, Row, Sheet, Title, Toggle } from "../ui/kit";
+import { ErrorBox, Loading } from "../ui/states";
+import { FunnelSheet } from "../ui/FunnelSheet";
+import { SliderField } from "../ui/SliderField";
+import { dt } from "../lib/format";
+
+type SheetId = "age" | "safety" | "holders" | "accum" | "media"
+             | "exec" | "freeride" | "api" | "keys" | "balance" | "audit";
 
 export function Profile({ refreshKey }: { refreshKey: number }) {
-  const keys = useApi(keysStatus, 0, [refreshKey]);
   const settings = useApi(getSettings, 0, [refreshKey]);
   const summary = useApi(analyticsSummary, 20000, [refreshKey]);
+  const keys = useApi(keysStatus, 0, [refreshKey]);
   const audit = useApi(() => listAudit(20), 20000, [refreshKey]);
+  const healthApi = useApi(health, 30000, [refreshKey]);
 
-  const [draft, setDraft] = useState<Settings | null>(null);
-  useEffect(() => { setDraft(settings.data); }, [settings.data]);
-
-  const [fields, setFields] = useState<KeysUpdate>({});
-  const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState<SheetId | null>(null);
+  const [funnelOpen, setFunnelOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Free Riding: признак, что пару «триггер / цель» только что поправили
+  // автоматически (сервер требует строго tp2 > tp1) — чтобы показать подсказку
+  // под полями. Сбрасывается при уходе из шторки.
+  const [freeAdjusted, setFreeAdjusted] = useState(false);
+  useEffect(() => { if (sheet !== "freeride") setFreeAdjusted(false); }, [sheet]);
+
+  // Ключи: в поля уходит только то, что человек реально набрал.
+  const [fields, setFields] = useState<KeysUpdate>({});
+  const [keyBusy, setKeyBusy] = useState(false);
 
   // Ключ доступа к API: сам ключ не показываем — только признак «задан».
   const [apiKey, setApiKey] = useState("");
   const [apiKeySet, setApiKeySet] = useState(hasToken());
   const [apiBusy, setApiBusy] = useState(false);
 
-  const patch = (p: SettingsPatch) => {
-    if (!draft) return;
-    const merged: Settings = {
-      screener: { ...draft.screener, ...(p.screener ?? {}) },
-      demo: { ...draft.demo, ...(p.demo ?? {}) },
-      free_ride: { ...draft.free_ride, ...(p.free_ride ?? {}) },
-    };
-    // Цель 2 обязана быть СТРОГО выше триггера фиксации (сервер иначе отклоняет
-    // сохранение). Чтобы ползунок «Триггер» не заходил в мёртвую зону, подтягиваем
-    // цель 2 вверх здесь же — одним запросом, а не оставляем пользователя с отказом.
-    let send: SettingsPatch = p;
-    if (merged.free_ride.tp2_percent <= merged.free_ride.tp1_percent) {
-      merged.free_ride.tp2_percent = Math.min(
-        1000,
-        Math.ceil((merged.free_ride.tp1_percent + 1) / 50) * 50, // следующий шаг ползунка цели 2
-      );
-      send = { ...p, free_ride: { ...(p.free_ride ?? {}), tp2_percent: merged.free_ride.tp2_percent } };
+  const close = () => setSheet(null);
+  const s = summary.data;
+  const st = settings.data;
+  const mode = healthApi.data?.mode;
+  const openValue = s ? Math.round((s.equity - s.balance) * 100) / 100 : 0;
+
+  const deposit = async () => {
+    setNotice(null);
+    try {
+      await addDeposit(500);
+      summary.refresh();
+      setNotice("Пополнено на $500");
+    } catch (e) {
+      setNotice(msg(e));
     }
-    setDraft(merged);
-    // Отказ сервера откатывает черновик к состоянию сервера: клиент не должен
-    // показывать одно, пока сервер хранит другое. Текст ошибки — как есть.
-    void updateSettings(send).catch((e) => {
-      setNotice(e instanceof Error ? e.message : String(e));
-      settings.refresh();
-    });
   };
 
   const saveKeys = async () => {
@@ -77,7 +89,7 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
       if (v) body[k] = v;                 // пустое — «не менять»
     });
     if (!Object.keys(body).length) { setNotice("нет новых значений для сохранения"); return; }
-    setBusy(true);
+    setKeyBusy(true);
     setNotice(null);
     try {
       await updateKeys(body);
@@ -85,16 +97,10 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
       keys.refresh();
       setNotice("Ключи сохранены");
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      setNotice(msg(e));
     } finally {
-      setBusy(false);
+      setKeyBusy(false);
     }
-  };
-
-  const deposit = async () => {
-    const monthly = draft?.demo.monthly_deposit ?? 500;
-    try { await addDeposit(monthly); summary.refresh(); setNotice(`Пополнено на ${money(monthly).replace("+", "")}`); }
-    catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   };
 
   // Ключ проверяется ДО сохранения: неверный не осядет в хранилище, и опрос
@@ -113,26 +119,285 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
     } catch (e) {
       setNotice(e instanceof UnauthorizedError
         ? "ключ не подошёл — проверьте значение"
-        : e instanceof Error ? e.message : String(e));
+        : msg(e));
     } finally {
       setApiBusy(false);
     }
   };
 
-  const s = summary.data;
+  const scr = st?.screener;
+  const demo = st?.demo;
+  const free = st?.free_ride;
+  const keysSet = keys.data
+    ? [keys.data.telegram_bot_token, keys.data.telegram_chat_id, keys.data.helius_api_key,
+       keys.data.gemini_api_key, keys.data.wallet].filter((k) => k.set).length
+    : 0;
 
   return (
     <div className="pb-3">
-      <Title sub="ключи, настройки и журнал">Профиль</Title>
+      <Title sub="Профиль и настройки">Кабинет</Title>
 
       {notice && (
         <div className="mx-5 mb-2 text-[13px] leading-snug px-3 py-2 rounded-[12px]"
              style={{ background: "var(--bg-elev)", color: "var(--label-2)" }}>{notice}</div>
       )}
+      {settings.error && <ErrorBox text={settings.error} onRetry={settings.refresh} />}
 
-      {/* ── ДОСТУП К API ── */}
-      <div className="px-3 mt-1">
-        <Panel title="Доступ к API">
+      {/* ── Профиль ─────────────────────────────────────────────────────────
+          Данных профиля в системе нет: пользователь один и имени у него нет.
+          Поэтому инициалы и имя — не «из аккаунта», а постоянные: так честнее,
+          чем показывать выдуманное имя. Подпись честно говорит, что за данные
+          на экране (live или тестовые). */}
+      <div className="px-4">
+        <div className="relative rounded-[26px] overflow-hidden" style={{ height: 210 }}>
+          <div className="absolute inset-0" style={{ background: "var(--tint-grad)", opacity: 0.55 }} />
+          <Aurora />
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="w-[84px] h-[84px] rounded-full flex items-center justify-center text-[30px] font-bold"
+                 style={{ color: "#fff", background: "rgba(10,10,12,.55)",
+                          border: "1px solid rgba(255,255,255,.28)",
+                          backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)" }}>
+              П
+            </div>
+            <div className="text-[22px] font-bold mt-3 tracking-[-0.02em]">ПРОМЕТЕЙ</div>
+            <div className="text-[13px] mt-0.5" style={{ color: "var(--label-2)" }}>
+              {mode === "live"
+                ? "демо-контур · живые рыночные данные"
+                : "демо-контур · тестовые данные"}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Капитал ───────────────────────────────────────────────────────
+            Главное число кабинета заезжает на профиль-карточку. «Эффективный
+            капитал» — это equity (свободные деньги ПЛЮС оценка позиций); ниже
+            честно разложено, сколько из него свободно, а сколько в позициях,
+            чтобы одна цифра не читалась как «доступно к выводу». */}
+        <div className="-mt-7 relative z-10">
+          <Glass className="p-5">
+            <div className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
+              Эффективный капитал · демо
+            </div>
+            <div className="num-hero mt-1">{s ? usd(s.equity) : "—"}</div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[14px]"
+                 style={{ color: "var(--label-2)" }}>
+              <span>свободно {s ? usd(s.balance) : "—"}</span>
+              <span>в позициях {s ? usd(openValue) : "—"}</span>
+            </div>
+            <Press feel="press" className="block w-full mt-4" onClick={deposit}>
+              <div className="py-3 rounded-[14px] text-center text-[16px] font-semibold text-white"
+                   style={{ background: "var(--tint-grad)" }}>
+                Пополнить $500
+              </div>
+            </Press>
+          </Glass>
+        </div>
+      </div>
+
+      {/* ── Скринер ─────────────────────────────────────────────────────── */}
+      <GroupLabel>Скринер</GroupLabel>
+      <div className="px-4">
+        <Glass flat className="overflow-hidden">
+          <Row icon={<CalendarRange size={16} />} title="Возраст и ликвидность"
+               right={<span className="tabular-nums whitespace-nowrap">{scr
+                 ? `${scr.age_min}–${scr.age_max} дн`
+                 : "—"}</span>}
+               onClick={() => setSheet("age")} />
+          <Row icon={<ShieldCheck size={16} />} title="Безопасность контракта"
+               right={<span className="tabular-nums whitespace-nowrap">{scr
+                 ? `≥${scr.burned_liq_min}%` : "—"}</span>}
+               onClick={() => setSheet("safety")} />
+          <Row icon={<Users size={16} />} title="Концентрация холдеров"
+               right={<span className="tabular-nums whitespace-nowrap">{scr
+                 ? `< ${scr.top10_max}%` : "—"}</span>}
+               onClick={() => setSheet("holders")} />
+          <Row icon={<TrendingUp size={16} />} title="Накопление"
+               right={<span className="tabular-nums whitespace-nowrap">{scr
+                 ? `≤${trim(scr.range_pct * 2)}% · ${trim(scr.drawdown_min)}–${trim(scr.drawdown_max)}%`
+                 : "—"}</span>}
+               onClick={() => setSheet("accum")} />
+          <Row last icon={<Newspaper size={16} />} title="Медиа и новости"
+               right={scr ? (scr.llm_filter ? "включено" : "выключено") : "—"}
+               onClick={() => setSheet("media")} />
+        </Glass>
+      </div>
+
+      {/* ── Демо-движок ─────────────────────────────────────────────────── */}
+      <GroupLabel>Демо-движок</GroupLabel>
+      <div className="px-4">
+        <Glass flat className="overflow-hidden">
+          <Row icon={<Gauge size={16} />} title="Параметры исполнения"
+               right={<span className="tabular-nums whitespace-nowrap">{demo
+                 ? `${trim(demo.slippage_min_pct)}–${trim(demo.slippage_max_pct)}%`
+                 : "—"}</span>}
+               onClick={() => setSheet("exec")} />
+          <Row last icon={<Repeat size={16} />} title="Free Riding"
+               right={<span className="tabular-nums whitespace-nowrap">{free
+                 ? `${trim(free.tp1_percent)}% · ${trim(free.tp2_percent)}%`
+                 : "—"}</span>}
+               onClick={() => setSheet("freeride")} />
+        </Glass>
+      </div>
+
+      {/* ── Данные и доступ ─────────────────────────────────────────────── */}
+      <GroupLabel>Данные и доступ</GroupLabel>
+      <div className="px-4">
+        <Glass flat className="overflow-hidden">
+          <Row icon={<Filter size={16} />} title="Воронка отбора"
+               right="этапы"
+               onClick={() => setFunnelOpen(true)} />
+          <Row icon={<Plug size={16} />} title="Доступ к API"
+               right={apiKeySet ? "задан" : "нет"}
+               onClick={() => setSheet("api")} />
+          <Row icon={<KeyRound size={16} />} title="Ключи и кошелёк"
+               right={keys.data ? `${keysSet} из 5` : "—"}
+               onClick={() => setSheet("keys")} />
+          <Row last icon={<Wallet size={16} />} title="Демо-баланс"
+               right={<span className="tabular-nums whitespace-nowrap">{s ? usd(s.balance) : "—"}</span>}
+               onClick={() => setSheet("balance")} />
+        </Glass>
+      </div>
+
+      {/* ── Прочее ──────────────────────────────────────────────────────── */}
+      <GroupLabel>Прочее</GroupLabel>
+      <div className="px-4">
+        <Glass flat className="overflow-hidden">
+          <Row last icon={<History size={16} />} title="Журнал действий"
+               right={<span className="tabular-nums whitespace-nowrap">{__BUILD__}</span>}
+               onClick={() => setSheet("audit")} />
+        </Glass>
+      </div>
+
+      {/* ── Шторки настроек ─────────────────────────────────────────────── */}
+      <GroupSheet open={sheet === "age"} onClose={close} title="Возраст и ликвидность"
+                  group="screener" base={st} onSaved={settings.refresh}>
+        {(d, p) => (<>
+          <SliderField label="Возраст, от" value={d.screener.age_min} min={0} max={365} step={1}
+                       suffix="дн" onChange={(v) => p({ screener: { age_min: v } })} />
+          <SliderField label="Возраст, до" value={d.screener.age_max} min={1} max={730} step={1}
+                       suffix="дн" onChange={(v) => p({ screener: { age_max: v } })} />
+          <SliderField label="Ликвидность, от" value={d.screener.liq_min} min={0} max={500000} step={1000}
+                       suffix="$" onChange={(v) => p({ screener: { liq_min: v } })} />
+          <SliderField label="Ликвидность, до" value={d.screener.liq_max} min={0} max={500000} step={1000}
+                       suffix="$" hint="0 — без потолка"
+                       onChange={(v) => p({ screener: { liq_max: v } })} />
+        </>)}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "safety"} onClose={close} title="Безопасность контракта"
+                  group="screener" base={st} onSaved={settings.refresh}>
+        {(d, p) => (<>
+          <SliderField label="Сожжённая ликвидность, не менее" value={d.screener.burned_liq_min}
+                       min={0} max={100} step={1} suffix="%"
+                       onChange={(v) => p({ screener: { burned_liq_min: v } })} />
+          <SliderField label="Уникальных мейкеров, не менее" value={d.screener.maker_min}
+                       min={0} max={100000} step={100}
+                       onChange={(v) => p({ screener: { maker_min: v } })} />
+          <ToggleRow label="Фильтр накрутки объёма" hint="уникальные мейкеры против ботов"
+                     on={d.screener.wash_filter}
+                     onChange={(v) => p({ screener: { wash_filter: v } })} />
+        </>)}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "holders"} onClose={close} title="Концентрация холдеров"
+                  group="screener" base={st} onSaved={settings.refresh}>
+        {(d, p) => (
+          <SliderField label="Доля топ-10 холдеров, не более" value={d.screener.top10_max}
+                       min={0} max={100} step={1} suffix="%"
+                       onChange={(v) => p({ screener: { top10_max: v } })} />
+        )}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "accum"} onClose={close} title="Накопление"
+                  group="screener" base={st} onSaved={settings.refresh}>
+        {(d, p) => (<>
+          <SliderField label="Окно коридора" value={d.screener.range_days} min={1} max={90} step={1}
+                       suffix="дн" onChange={(v) => p({ screener: { range_days: v } })} />
+          {/* Ширина коридора = полуширина×2: на сервере хранится полуширина,
+              а человеку показываем полную ширину и пишем назад v/2. */}
+          <SliderField label="Ширина коридора, не более" value={d.screener.range_pct * 2}
+                       min={2} max={100} step={1} suffix="%"
+                       onChange={(v) => p({ screener: { range_pct: v / 2 } })} />
+          <SliderField label="Просадка от максимума, от" value={d.screener.drawdown_min}
+                       min={0} max={100} step={1} suffix="%"
+                       onChange={(v) => p({ screener: { drawdown_min: v } })} />
+          <SliderField label="Просадка от максимума, до" value={d.screener.drawdown_max}
+                       min={0} max={100} step={1} suffix="%"
+                       onChange={(v) => p({ screener: { drawdown_max: v } })} />
+          <SliderField label="Рост холдеров за 7 дней, не менее" value={d.screener.holders_growth_min}
+                       min={0} max={100} step={0.5} suffix="%"
+                       onChange={(v) => p({ screener: { holders_growth_min: v } })} />
+        </>)}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "media"} onClose={close} title="Медиа и новости"
+                  group="screener" base={st} onSaved={settings.refresh}>
+        {(d, p) => (
+          <ToggleRow label="Проверка упоминаний в X"
+                     hint="расходует кредит Apify: собирает упоминания и оценивает интерес, без неё слой медиа пропускается"
+                     on={d.screener.llm_filter}
+                     onChange={(v) => p({ screener: { llm_filter: v } })} />
+        )}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "exec"} onClose={close} title="Параметры исполнения"
+                  group="demo" base={st} onSaved={settings.refresh}>
+        {(d, p) => (<>
+          <SliderField label="Стартовый баланс" value={d.demo.start_balance} min={0} max={100000} step={50}
+                       suffix="$" onChange={(v) => p({ demo: { start_balance: v } })} />
+          <SliderField label="Пополнение в месяц" value={d.demo.monthly_deposit} min={0} max={100000} step={50}
+                       suffix="$" onChange={(v) => p({ demo: { monthly_deposit: v } })} />
+          <SliderField label="Комиссия пула" value={d.demo.pool_fee_pct} min={0} max={5} step={0.05}
+                       suffix="%" onChange={(v) => p({ demo: { pool_fee_pct: v } })} />
+          <SliderField label="Проскальзывание, от" value={d.demo.slippage_min_pct} min={0} max={50} step={0.5}
+                       suffix="%" onChange={(v) => p({ demo: { slippage_min_pct: v } })} />
+          <SliderField label="Проскальзывание, до" value={d.demo.slippage_max_pct} min={0} max={50} step={0.5}
+                       suffix="%" onChange={(v) => p({ demo: { slippage_max_pct: v } })} />
+          <SliderField label="Time-stop" value={d.demo.time_stop_days} min={7} max={60} step={1}
+                       suffix="дн" onChange={(v) => p({ demo: { time_stop_days: v } })} />
+          <SliderField label="Порог слива ликвидности" value={d.demo.liq_drain_pct} min={1} max={100} step={1}
+                       suffix="%" onChange={(v) => p({ demo: { liq_drain_pct: v } })} />
+          <SliderField label="Длительность тика" value={d.demo.tick_minutes} min={1} max={1440} step={1}
+                       suffix="мин" onChange={(v) => p({ demo: { tick_minutes: v } })} />
+        </>)}
+      </GroupSheet>
+
+      <GroupSheet open={sheet === "freeride"} onClose={close} title="Free Riding"
+                  group="free_ride" base={st} onSaved={settings.refresh}>
+        {(d, p) => (<>
+          {/* Пара «триггер / цель» обязана быть строго упорядоченной (tp2 > tp1):
+              сервер отвергает равенство и меньшинство. Правя одно поле, поднимаем
+              или опускаем второе на шаг, чтобы «Сохранить» не падало с 400. */}
+          <SliderField label="Триггер фиксации" value={d.free_ride.tp1_percent} min={10} max={400} step={10}
+                       suffix="%" onChange={(v) => {
+                         const next = { ...d.free_ride, tp1_percent: v };
+                         if (next.tp2_percent <= v) { next.tp2_percent = v + 1; setFreeAdjusted(true); }
+                         p({ free_ride: next });
+                       }} />
+          {/* Доля хранится как 0..1, показываем в процентах: 0.5 → «50%». */}
+          <SliderField label="Доля фиксации" value={d.free_ride.tp1_fraction * 100} min={10} max={90} step={5}
+                       suffix="%" onChange={(v) => p({ free_ride: { tp1_fraction: v / 100 } })} />
+          <SliderField label="Цель 2 (остаток)" value={d.free_ride.tp2_percent} min={100} max={1000} step={50}
+                       suffix="%" hint="должна быть выше триггера фиксации"
+                       onChange={(v) => {
+                         const next = { ...d.free_ride, tp2_percent: v };
+                         if (v <= next.tp1_percent) { next.tp1_percent = v - 1; setFreeAdjusted(true); }
+                         p({ free_ride: next });
+                       }} />
+          {freeAdjusted && (
+            <p className="text-[12px] mt-1 leading-snug" style={{ color: "var(--label-3)" }}>
+              Цель всегда выше триггера — значение поднято автоматически.
+            </p>
+          )}
+        </>)}
+      </GroupSheet>
+
+      {/* ── Воронка отбора: готовый компонент ───────────────────────────── */}
+      <FunnelSheet open={funnelOpen} onClose={() => setFunnelOpen(false)} />
+
+      {/* ── Доступ к API ────────────────────────────────────────────────── */}
+      <Sheet open={sheet === "api"} onClose={close} title="Доступ к API" tall>
+        <div className="pb-6">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[14px]">Ключ доступа к демо-контуру</span>
             <span className="text-[12px] tabular-nums flex items-center gap-1"
@@ -146,167 +411,86 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
                  placeholder="введите новый ключ"
                  className="w-full px-3 py-2.5 rounded-[12px] text-[15px] outline-none"
                  style={{ background: "var(--bg-elev)", color: "var(--label)" }} />
-          <Press onClick={saveApiKey} disabled={apiBusy} className="block w-full mt-2">
-            <div className="flex items-center justify-center gap-2 py-2.5 rounded-[12px] text-[14px] font-semibold"
-                 style={{ background: "var(--bg-elev)", opacity: apiBusy ? 0.6 : 1 }}>
+          <Press onClick={saveApiKey} disabled={apiBusy} className="block w-full mt-3">
+            <div className="py-3 rounded-[14px] text-center text-[15px] font-semibold text-white"
+                 style={{ background: "var(--tint-grad)", opacity: apiBusy ? 0.6 : 1 }}>
               Сохранить ключ
             </div>
           </Press>
           <p className="text-[12px] mt-2 leading-snug" style={{ color: "var(--label-3)" }}>
             Ключ хранится только в этом устройстве и не показывается — виден лишь факт «задан».
           </p>
-        </Panel>
-      </div>
+        </div>
+      </Sheet>
 
-      {/* ── КЛЮЧИ ── */}
-      <div className="px-3 mt-1">
-        <Panel title="Ключи и кошелёк">
+      {/* ── Ключи и кошелёк ─────────────────────────────────────────────── */}
+      <Sheet open={sheet === "keys"} onClose={close} title="Ключи и кошелёк" tall>
+        <div className="pb-6 flex flex-col gap-3">
           {keys.loading && !keys.data && <Loading label="читаем статус ключей…" />}
           {keys.error && <ErrorBox text={keys.error} onRetry={keys.refresh} />}
-          {keys.data && (
-            <div className="flex flex-col gap-3">
-              <KeyField label="Telegram bot token" status={keys.data.telegram_bot_token}
-                        value={fields.telegram_bot_token ?? ""}
-                        onChange={(v) => setFields((f) => ({ ...f, telegram_bot_token: v }))} />
-              <KeyField label="Telegram chat id" status={keys.data.telegram_chat_id}
-                        value={fields.telegram_chat_id ?? ""}
-                        onChange={(v) => setFields((f) => ({ ...f, telegram_chat_id: v }))} />
-              <KeyField label="Helius API key" status={keys.data.helius_api_key}
-                        value={fields.helius_api_key ?? ""}
-                        onChange={(v) => setFields((f) => ({ ...f, helius_api_key: v }))} />
-              <KeyField label="Gemini API key" status={keys.data.gemini_api_key}
-                        value={fields.gemini_api_key ?? ""}
-                        onChange={(v) => setFields((f) => ({ ...f, gemini_api_key: v }))} />
-              <KeyField label="Секрет кошелька" status={keys.data.wallet}
-                        hint={keys.data.wallet.address ? `адрес: ${keys.data.wallet.address}` : undefined}
-                        value={fields.wallet_secret ?? ""}
-                        onChange={(v) => setFields((f) => ({ ...f, wallet_secret: v }))} />
+          {keys.data && (<>
+            <KeyField label="Telegram bot token" status={keys.data.telegram_bot_token}
+                      value={fields.telegram_bot_token ?? ""}
+                      onChange={(v) => setFields((f) => ({ ...f, telegram_bot_token: v }))} />
+            <KeyField label="Telegram chat id" status={keys.data.telegram_chat_id}
+                      value={fields.telegram_chat_id ?? ""}
+                      onChange={(v) => setFields((f) => ({ ...f, telegram_chat_id: v }))} />
+            <KeyField label="Helius API key" status={keys.data.helius_api_key}
+                      value={fields.helius_api_key ?? ""}
+                      onChange={(v) => setFields((f) => ({ ...f, helius_api_key: v }))} />
+            <KeyField label="Gemini API key" status={keys.data.gemini_api_key}
+                      value={fields.gemini_api_key ?? ""}
+                      onChange={(v) => setFields((f) => ({ ...f, gemini_api_key: v }))} />
+            <KeyField label="Секрет кошелька" status={keys.data.wallet}
+                      hint={keys.data.wallet.address ? `адрес: ${keys.data.wallet.address}` : undefined}
+                      value={fields.wallet_secret ?? ""}
+                      onChange={(v) => setFields((f) => ({ ...f, wallet_secret: v }))} />
 
-              <Press onClick={saveKeys} disabled={busy} className="block w-full mt-1">
-                <div className="flex items-center justify-center gap-2 py-3 rounded-[14px] text-[15px] font-semibold text-white"
-                     style={{ background: "var(--tint-grad)", opacity: busy ? 0.6 : 1 }}>
-                  <Save size={16} /> Сохранить
-                </div>
-              </Press>
-              <p className="text-[12px] leading-snug" style={{ color: "var(--label-3)" }}>
-                Секреты хранятся в .env на сервере и наружу не отдаются — здесь
-                видны только маска и отметка «задано».
-              </p>
-            </div>
-          )}
-        </Panel>
-      </div>
-
-      {/* ── ДЕМО-БАЛАНС ── */}
-      <div className="px-3 mt-3">
-        <Panel title="Демо-баланс">
-          {s ? (
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <div className="text-[26px] font-bold tabular-nums leading-none">
-                  {money(s.balance).replace("+", "")}
-                </div>
-                <div className="text-[12px] mt-1" style={{ color: "var(--label-3)" }}>
-                  внесено {money(s.deposited).replace("+", "")} · издержки {money(s.costs_usd).replace("+", "")}
-                </div>
+            <Press onClick={saveKeys} disabled={keyBusy} className="block w-full mt-1">
+              <div className="flex items-center justify-center gap-2 py-3 rounded-[14px] text-[15px] font-semibold text-white"
+                   style={{ background: "var(--tint-grad)", opacity: keyBusy ? 0.6 : 1 }}>
+                <Save size={16} /> Сохранить
               </div>
-              <Press onClick={deposit}>
-                <div className="px-4 py-2.5 rounded-[12px] text-[14px] font-semibold"
-                     style={{ background: "var(--bg-elev)" }}>Пополнить</div>
-              </Press>
+            </Press>
+            <p className="text-[12px] leading-snug" style={{ color: "var(--label-3)" }}>
+              Секреты хранятся в .env на сервере и наружу не отдаются — здесь
+              видны только маска и отметка «задано».
+            </p>
+          </>)}
+        </div>
+      </Sheet>
+
+      {/* ── Демо-баланс ─────────────────────────────────────────────────── */}
+      <Sheet open={sheet === "balance"} onClose={close} title="Демо-баланс" tall>
+        <div className="pb-6">
+          {s ? (<>
+            <div className="text-[13px] uppercase tracking-wide" style={{ color: "var(--label-2)" }}>
+              Свободно на демо-счёте
             </div>
-          ) : (
+            <div className="num-hero mt-1">{usd(s.balance)}</div>
+            <div className="mt-3">
+              <KVRow label="Внесено за всё время" value={usd(s.deposited)} />
+              <KVRow label="В позициях" value={usd(openValue)} />
+              <KVRow label="Издержки за всё время" value={usd(s.costs_usd)} />
+            </div>
+            <Press feel="press" className="block w-full mt-4" onClick={deposit}>
+              <div className="py-3.5 rounded-[16px] text-center text-[16px] font-semibold text-white"
+                   style={{ background: "var(--tint-grad)" }}>
+                Пополнить $500
+              </div>
+            </Press>
+          </>) : (
             <Loading label="считаем баланс…" />
           )}
-        </Panel>
-      </div>
+        </div>
+      </Sheet>
 
-      {/* ── НАСТРОЙКИ СКРИНЕРА ── */}
-      <div className="px-3 mt-3">
-        <Panel title="Скринер">
-          {settings.loading && !draft && <Loading label="читаем настройки…" />}
-          {settings.error && <ErrorBox text={settings.error} onRetry={settings.refresh} />}
-          {draft && (
-            <>
-              <Group label="Возраст и ликвидность" open>
-                <SliderRow label="Возраст, от" value={draft.screener.age_min} min={0} max={365} step={1}
-                           suffix=" дн" onCommit={(v) => patch({ screener: { age_min: v } })} />
-                <SliderRow label="Возраст, до" value={draft.screener.age_max} min={1} max={730} step={1}
-                           suffix=" дн" onCommit={(v) => patch({ screener: { age_max: v } })} />
-                <SliderRow label="Ликвидность, от" value={draft.screener.liq_min} min={0} max={500000} step={1000}
-                           fmt={(v) => "$" + v.toLocaleString("ru-RU")} onCommit={(v) => patch({ screener: { liq_min: v } })} />
-              </Group>
-
-              <Group label="Концентрация и накопление">
-                <SliderRow label="Топ-10 холдеров, не более" value={draft.screener.top10_max} min={1} max={100} step={1}
-                           suffix="%" onCommit={(v) => patch({ screener: { top10_max: v } })} />
-                <SliderRow label="Коридор накопления, дней" value={draft.screener.range_days} min={1} max={90} step={1}
-                           suffix=" дн" onCommit={(v) => patch({ screener: { range_days: v } })} />
-                <SliderRow label="Ширина коридора, до" value={+(draft.screener.range_pct * 2).toFixed(1)} min={2} max={100} step={1}
-                           suffix="%" onCommit={(v) => patch({ screener: { range_pct: v / 2 } })} />
-                <SliderRow label="Падение от ATH, от" value={draft.screener.drawdown_min} min={0} max={100} step={1}
-                           suffix="%" onCommit={(v) => patch({ screener: { drawdown_min: v } })} />
-                <SliderRow label="Падение от ATH, до" value={draft.screener.drawdown_max} min={0} max={100} step={1}
-                           suffix="%" onCommit={(v) => patch({ screener: { drawdown_max: v } })} />
-                <SliderRow label="Рост холдеров за 7д" value={draft.screener.holders_growth_min} min={0} max={100} step={0.5}
-                           suffix="%" onCommit={(v) => patch({ screener: { holders_growth_min: v } })} />
-                <SliderRow label="Уникальных мейкеров" value={draft.screener.maker_min} min={0} max={1000} step={10}
-                           onCommit={(v) => patch({ screener: { maker_min: v } })} />
-                <ToggleRow label="Фильтр накрутки" hint="уникальные мейкеры против ботов"
-                           on={draft.screener.wash_filter}
-                           onChange={(v) => patch({ screener: { wash_filter: v } })} />
-                <ToggleRow label="Фильтр по новостям и упоминаниям"
-                           hint="Собирает упоминания в X (Apify) и оценивает интерес; без него слой 5 не проверяется и кредит Apify не тратится"
-                           on={draft.screener.llm_filter}
-                           onChange={(v) => patch({ screener: { llm_filter: v } })} />
-              </Group>
-            </>
-          )}
-        </Panel>
-      </div>
-
-      {/* ── ДЕМО-ДВИЖОК И FREE RIDING ── */}
-      <div className="px-3 mt-3">
-        <Panel title="Демо-движок">
-          {draft && (
-            <>
-              <SliderRow label="Стартовый баланс" value={draft.demo.start_balance} min={0} max={100000} step={50}
-                         fmt={(v) => "$" + v.toLocaleString("ru-RU")} onCommit={(v) => patch({ demo: { start_balance: v } })} />
-              <SliderRow label="Пополнение в месяц" value={draft.demo.monthly_deposit} min={0} max={100000} step={50}
-                         fmt={(v) => "$" + v.toLocaleString("ru-RU")} onCommit={(v) => patch({ demo: { monthly_deposit: v } })} />
-              <SliderRow label="Комиссия пула" value={draft.demo.pool_fee_pct} min={0} max={5} step={0.05}
-                         suffix="%" onCommit={(v) => patch({ demo: { pool_fee_pct: v } })} />
-              <SliderRow label="Проскальзывание, от" value={draft.demo.slippage_min_pct} min={0} max={50} step={0.5}
-                         suffix="%" onCommit={(v) => patch({ demo: { slippage_min_pct: v } })} />
-              <SliderRow label="Проскальзывание, до" value={draft.demo.slippage_max_pct} min={0} max={50} step={0.5}
-                         suffix="%" onCommit={(v) => patch({ demo: { slippage_max_pct: v } })} />
-              <SliderRow label="Time-stop" value={draft.demo.time_stop_days} min={7} max={60} step={1}
-                         suffix=" дн" onCommit={(v) => patch({ demo: { time_stop_days: v } })} />
-              <SliderRow label="Порог слива ликвидности" value={draft.demo.liq_drain_pct} min={1} max={100} step={1}
-                         suffix="%" onCommit={(v) => patch({ demo: { liq_drain_pct: v } })} />
-              <SliderRow label="Шаг виртуальных часов" value={draft.demo.tick_minutes} min={1} max={1440} step={1}
-                         suffix=" мин" onCommit={(v) => patch({ demo: { tick_minutes: v } })} />
-
-              <div className="mt-2 pt-2" style={{ boxShadow: "inset 0 .5px 0 var(--separator)" }}>
-                <div className="text-[12px] uppercase tracking-wide mb-1" style={{ color: "var(--label-3)" }}>
-                  Free Riding
-                </div>
-                <SliderRow label="Триггер фиксации" value={draft.free_ride.tp1_percent} min={10} max={400} step={10}
-                           suffix="%" onCommit={(v) => patch({ free_ride: { tp1_percent: v } })} />
-                <SliderRow label="Доля фиксации" value={draft.free_ride.tp1_fraction} min={0.1} max={0.9} step={0.05}
-                           fmt={(v) => Math.round(v * 100) + "%"}
-                           onCommit={(v) => patch({ free_ride: { tp1_fraction: v } })} />
-                <SliderRow label="Цель 2 (остаток)" value={draft.free_ride.tp2_percent} min={100} max={1000} step={50}
-                           suffix="%" onCommit={(v) => patch({ free_ride: { tp2_percent: v } })} />
-              </div>
-            </>
-          )}
-        </Panel>
-      </div>
-
-      {/* ── ЖУРНАЛ ── */}
-      <div className="px-3 mt-3">
-        <Panel title="Журнал действий">
+      {/* ── Журнал действий ─────────────────────────────────────────────── */}
+      <Sheet open={sheet === "audit"} onClose={close} title="Журнал действий" tall>
+        <div className="pb-6">
+          <div className="text-[12px] mb-2 tabular-nums" style={{ color: "var(--label-3)" }}>
+            сборка {__BUILD__} · режим {mode === "live" ? "боевой" : "демо"}
+          </div>
           {audit.loading && !audit.data && <Loading label="читаем журнал…" />}
           {audit.error && <ErrorBox text={audit.error} onRetry={audit.refresh} />}
           {audit.data && audit.data.length === 0 && (
@@ -323,13 +507,106 @@ export function Profile({ refreshKey }: { refreshKey: number }) {
               </div>
             </div>
           ))}
-        </Panel>
-      </div>
+        </div>
+      </Sheet>
     </div>
   );
 }
 
+/* ── шторка группы настроек ──────────────────────────────────────────────── */
+
+/** Шторка с локальным черновиком группы.
+ *
+ *  Открытие даёт свежую копию настроек сервера; все правки полей идут в неё
+ *  (`patch`) и никуда не отправляются. Один запрос уходит по «Сохранить» — и
+ *  только за ТУ группу, которую правили. Отказ сервера печатается в шторке, и
+ *  она остаётся открытой; закрытие (крестик/фон) откатывает черновик. */
+function GroupSheet({ open, onClose, title, group, base, onSaved, children }: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  group: keyof Settings;
+  base: Settings | null;
+  onSaved: () => void;
+  children: (draft: Settings, patch: (p: SettingsPatch) => void) => ReactNode;
+}) {
+  const [draft, setDraft] = useState<Settings | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setErr(null);
+    setDraft(base
+      ? { screener: { ...base.screener }, demo: { ...base.demo }, free_ride: { ...base.free_ride } }
+      : null);
+  }, [open, base]);
+
+  const patch = (p: SettingsPatch) => setDraft((d) => d ? {
+    screener: { ...d.screener, ...(p.screener ?? {}) },
+    demo: { ...d.demo, ...(p.demo ?? {}) },
+    free_ride: { ...d.free_ride, ...(p.free_ride ?? {}) },
+  } : d);
+
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true);
+    setErr(null);
+    // Один запрос на всю группу — по кнопке, а не по каждому движению пальца.
+    const body: SettingsPatch =
+      group === "screener" ? { screener: draft.screener } :
+      group === "demo" ? { demo: draft.demo } :
+      { free_ride: draft.free_ride };
+    try {
+      await updateSettings(body);
+      onSaved();
+      onClose();
+    } catch (e) {
+      // Причина отказа — прямо в шторке, и шторка НЕ закрывается: человек
+      // должен увидеть, что именно не приняли, и поправить.
+      setErr(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onClose={onClose} title={title} tall>
+      {draft ? (
+        <div className="pb-4">
+          {children(draft, patch)}
+          {err && (
+            <p className="text-[13px] mt-3 px-3 py-2 rounded-[12px] leading-snug"
+               style={{ background: "color-mix(in srgb, var(--red) 16%, transparent)", color: "var(--red)" }}>
+              {err}
+            </p>
+          )}
+          <Press feel="press" className="block w-full mt-4" disabled={busy} onClick={save}>
+            <div className="flex items-center justify-center gap-2 py-3.5 rounded-[16px] text-[16px] font-semibold text-white"
+                 style={{ background: "var(--tint-grad)", opacity: busy ? 0.6 : 1 }}>
+              <Save size={17} /> Сохранить
+            </div>
+          </Press>
+        </div>
+      ) : (
+        <div className="pb-6"><Loading label="читаем настройки…" /></div>
+      )}
+    </Sheet>
+  );
+}
+
 /* ── вспомогательные строки ── */
+
+/** Строка «подпись → значение» для шторок (баланс, ключи). Локальная копия
+ *  KV из ui/states: здесь нужен только компактный вид, без лишних пропов. */
+function KVRow({ label, value }: { label: ReactNode; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-[5px]">
+      <span className="text-[14px]" style={{ color: "var(--label-2)" }}>{label}</span>
+      <span className="text-[14px] font-medium tabular-nums">{value}</span>
+    </div>
+  );
+}
 
 function KeyField({ label, status, value, onChange, hint }: {
   label: string; status: { set: boolean; preview: string };
@@ -355,52 +632,32 @@ function KeyField({ label, status, value, onChange, hint }: {
   );
 }
 
-function Group({ label, open: openDefault, children }: {
-  label: string; open?: boolean; children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(!!openDefault);
-  return (
-    <div className="mt-1">
-      <Press onClick={() => setOpen((o) => !o)} className="block w-full">
-        <div className="flex items-center justify-between py-2">
-          <span className="text-[14px] font-semibold">{label}</span>
-          <span className="text-[12px]" style={{ color: "var(--label-3)" }}>{open ? "свернуть" : "развернуть"}</span>
-        </div>
-      </Press>
-      {open && <div className="pb-1">{children}</div>}
-    </div>
-  );
-}
-
 function ToggleRow({ label, hint, on, onChange }: {
   label: string; hint?: string; on: boolean; onChange: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center gap-3 py-2.5">
       <div className="flex-1 min-w-0">
-        <div className="text-[15px]">{label}</div>
-        {hint && <div className="text-[12px] mt-0.5" style={{ color: "var(--label-3)" }}>{hint}</div>}
+        <div className="text-[15px] leading-snug">{label}</div>
+        {hint && <div className="text-[12px] mt-0.5 leading-snug" style={{ color: "var(--label-3)" }}>{hint}</div>}
       </div>
       <Toggle on={on} onChange={onChange} />
     </div>
   );
 }
 
-function SliderRow({ label, value, min, max, step = 1, suffix, fmt, onCommit }: {
-  label: string; value: number; min: number; max: number; step?: number;
-  suffix?: string; fmt?: (v: number) => string; onCommit: (v: number) => void;
-}) {
-  const [live, setLive] = useState(value);
-  useEffect(() => { setLive(value); }, [value]);
-  const show = fmt ? fmt(live) : live.toLocaleString("ru-RU") + (suffix ?? "");
-  return (
-    <div className="py-2">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[14px]" style={{ color: "var(--label-2)" }}>{label}</span>
-        <span className="text-[14px] font-semibold tabular-nums">{show}</span>
-      </div>
-      <Slider value={value} min={min} max={max} step={step}
-              onInput={setLive} onChange={(v) => { setLive(v); onCommit(v); }} />
-    </div>
-  );
+/* ── мелочи ── */
+
+function msg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Сумма в долларах с копейками: «$1 234,56». Знак не показываем — это не PnL. */
+function usd(v: number): string {
+  return "$" + v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Число шага без «хвоста»: 45, 0.5, 20. */
+function trim(v: number): string {
+  return String(+v.toFixed(2));
 }

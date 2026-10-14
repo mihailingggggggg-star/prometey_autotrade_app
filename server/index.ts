@@ -38,6 +38,7 @@ import {
   signalById,
   getDb,
   audit,
+  funnelSummary,
   type SignalRow,
 } from "./db.ts";
 import { runScan, startScan, getScanStatus } from "./screener.ts";
@@ -437,6 +438,29 @@ const routes: Route[] = [
     // эффектов. Нужен визуализатору поиска — по одному спиннеру не понять,
     // идёт работа или всё зависло.
     handler: () => getScanStatus(),
+  },
+  {
+    method: "GET",
+    pattern: "/api/funnel",
+    // История проходов воронки за период: этапы отбора с цифрами + разбивка по
+    // дням Бишкера + последние проходы. from/to — unix-СЕКУНДЫ; не заданы —
+    // последние 30 дней до «сейчас». limit — сколько последних проходов отдать
+    // (по умолчанию 20, максимум 100). Дешёвый: читаем свою таблицу scan_runs,
+    // без сети. Значения чиним через Math.max/min — наружу исключений нет.
+    handler: ({ url }) => {
+      const now = nowSec();
+      // Важно отличать «параметр не задан» (null → дефолт) от «0» (значимый
+      // unix = начало истории), поэтому Null-check, а не `|| default`.
+      const fromRaw = url.searchParams.get("from");
+      const toRaw = url.searchParams.get("to");
+      const fromQ = fromRaw === null ? Number.NaN : Number(fromRaw);
+      const toQ = toRaw === null ? Number.NaN : Number(toRaw);
+      const from = Number.isFinite(fromQ) ? Math.max(0, Math.floor(fromQ)) : now - 30 * 86400;
+      const to = Number.isFinite(toQ) ? Math.max(0, Math.floor(toQ)) : now;
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 20));
+      // Период всегда непустой: to не меньше from (иначе отдали бы «ноль»).
+      return funnelSummary(from, Math.max(from, to), limit);
+    },
   },
   {
     method: "POST",

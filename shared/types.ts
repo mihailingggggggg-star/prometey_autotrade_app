@@ -195,6 +195,56 @@ export interface ScanResult {
   rejected_by_layer: Record<string, number>;
 }
 
+/* ─────────────── воронка отбора (история сканов) ───────────────
+ * Один проход воронки сохраняется в историю, чтобы владелец мог посмотреть,
+ * НА КАКОМ ЭТАПЕ и по КАКОЙ ПРИЧИНЕ отсеиваются монеты, и сравнить дни между
+ * собой. Пишется по завершении каждого скана (планового и ручного).
+ */
+
+/** Один проход воронки: сколько монет взяли и где их срезало. */
+export interface ScanRun {
+  id: number;
+  ts: number;
+  candidates_total: number;
+  candidates_done: number;
+  signals_found: number;
+  elapsed_ms: number;
+  budget_used: number;
+  /** Отбраковка по слоям воронки: ключи «1»..«5», плюс «budget»/«error». */
+  by_layer: Record<string, number>;
+  /** Отбраковка по конкретной проверке: код чека → сколько монет срезал. */
+  by_check: Record<string, number>;
+}
+
+/** День воронки: агрегаты по календарному дню (пояс Бишкек, UTC+6). */
+export interface FunnelDay {
+  /** Unix-секунды начала дня. */
+  day: number;
+  runs: number;
+  candidates: number;
+  signals: number;
+  by_layer: Record<string, number>;
+  by_check: Record<string, number>;
+}
+
+/** Сводка воронки за период: этапы отбора с цифрами + разбивка по дням. */
+export interface FunnelSummary {
+  from: number;
+  to: number;
+  runs: number;
+  /** Сколько монет воронка взяла в работу за период (сумма по проходам). */
+  candidates_total: number;
+  signals_found: number;
+  /** Куда ушли монеты: сумма отбракованных по слоям за период. */
+  by_layer: Record<string, number>;
+  /** Причины отбраковки внутри слоёв (код чека → сколько монет). */
+  by_check: Record<string, number>;
+  /** Только дни, в которые были проходы (свежие первыми). */
+  days: FunnelDay[];
+  /** Последние проходы для списка в окне (свежие первыми). */
+  recent: ScanRun[];
+}
+
 /** Свеча: [ts, open, high, low, close, volume]. */
 export type Candle = [number, number, number, number, number, number];
 
@@ -333,6 +383,8 @@ export interface ScreenerSettings {
   drawdown_max: number;
   holders_growth_min: number;
   maker_min: number;
+  /** Порог сожжённой/заблокированной ликвидности, % (слой 1, безопасность). */
+  burned_liq_min: number;
 }
 
 export interface DemoSettings {

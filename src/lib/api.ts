@@ -14,7 +14,7 @@
 import type {Health, Signal, SignalDetail, SignalStatus, ScanResult, Candle, ChartTf,
   Position, PositionStatus, Trade, AnalyticsSummary, Settings, SettingsPatch,
   KeysStatus, KeysUpdate, Alert, AuditEntry, OpenPositionRequest, Fill,
-  ApiErrorBody, ScanStatus, ScanStart, TokenEvent } from "../../shared/types";
+  ApiErrorBody, ScanStatus, ScanStart, TokenEvent, FunnelSummary } from "../../shared/types";
 
 /** Базовый адрес API: ключ `solana.api` из localStorage либо тот же origin. */
 export function apiBase(): string {
@@ -239,6 +239,21 @@ export const analyticsSummary = () => call<AnalyticsSummary>("/api/analytics/sum
 
 export const addDeposit = (usd: number) =>
   call<AnalyticsSummary>("/api/deposits", { method: "POST", body: { usd } });
+
+/* ── воронка отбора (история сканов) ──
+ * GET /api/funnel отдаёт сводку воронки за период: этапы отбора с цифрами,
+ * разбивку по дням и последние проходы — чтобы владелец видел, НА КАКОМ этапе
+ * и по КАКОЙ причине скринер срезает монеты. Границы `from`/`to` — в секундах
+ * (как и остальные метки времени контракта), `limit` ограничивает список
+ * последних проходов. */
+export const funnel = (opts: { from?: number; to?: number; limit?: number } = {}) => {
+  const q = new URLSearchParams();
+  if (opts.from != null) q.set("from", String(opts.from));
+  if (opts.to != null) q.set("to", String(opts.to));
+  if (opts.limit != null) q.set("limit", String(opts.limit));
+  const s = q.toString();
+  return call<FunnelSummary>(`/api/funnel${s ? `?${s}` : ""}`);
+};
 
 /* ── настройки ── */
 export const getSettings = () => call<Settings>("/api/settings");

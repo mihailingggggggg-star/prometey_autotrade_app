@@ -5,7 +5,7 @@
  * под ним или live. Сигнал создаётся только когда слои 1–4 пройдены, а слой 5
  * даёт sentiment >= 6 и is_organic === true. При сбое LLM сигнал НЕ создаётся.
  */
-import { ensureClock, worldStart, virtualNow, nowSec, getSettings, getDb, audit } from "./db.ts";
+import { ensureClock, worldStart, virtualNow, nowSec, getSettings, getDb, audit, insertScanRun } from "./db.ts";
 import { readDataMode, getEnvNum, getEnv } from "./config.ts";
 import {
   createMockSource,
@@ -54,13 +54,11 @@ const MAX_PER_SCAN = 5;
 const MAX_EVENT_CANDIDATES = 40;
 
 /**
- * Слой 1: минимальная доля сожжённой/заблокированной ликвидности, %.
- * РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026: ослаблено с жёстких 100% («полностью
- * сожжена») до 70%. На живом рынке 100% отсекало почти все монеты — сигналов
- * не было; 70% оставлено как компромисс между защитой от rug-pull и живостью
- * контура. Это НЕ случайное число, а осознанное решение владельца.
+ * Порог сожжённой ликвидности слоя 1 больше НЕ константа: он вынесен в настройки
+ * (`screener.burned_liq_min`, по умолчанию 70 — решение владельца от 12.10.2026,
+ * см. server/db.ts) и читается как `s.burned_liq_min`, чтобы владелец мог менять
+ * его без правки кода.
  */
-const BURNED_LIQ_MIN_PCT = 70;
 /**
  * Ориентир для верхней оценки доли топ-10 из Jupiter (audit.topHoldersPercentage,
  * ВКЛЮЧАЕТ счёт пула): показываем, но НЕ блокируем — без RPC точной меры нет.
@@ -187,11 +185,11 @@ async function screenCandidate(
   noteStage("проверяю безопасность контракта", ref);
   // Слой 1 — RugCheck + перекрёстная проверка прав минта/фриза по Jupiter.
   const rug = await src.rug(ref);
-  // Порог 70% — решение владельца (см. BURNED_LIQ_MIN_PCT выше).
-  const okBurn = rug.burned_liq >= BURNED_LIQ_MIN_PCT;
+  // Порог — из настроек (бывшая константа BURNED_LIQ_MIN_PCT, дефолт 70).
+  const okBurn = rug.burned_liq >= s.burned_liq_min;
   const okMint = rug.mint_authority_revoked;
   const okFreeze = rug.freeze_authority_revoked;
-  checks.push(chk(1, "burned_liq", "Ликвидность сожжена", okBurn, rug.burned_liq, `≥${BURNED_LIQ_MIN_PCT}%`));
+  checks.push(chk(1, "burned_liq", "Ликвидность сожжена", okBurn, rug.burned_liq, `≥${s.burned_liq_min}%`));
   checks.push(chk(1, "mint_revoked", "Право минта отозвано", okMint, okMint, "true"));
   checks.push(chk(1, "freeze_revoked", "Право фриза отозвано", okFreeze, okFreeze, "true"));
   // danger-риск из отчёта RugCheck (только live) блокирует сигнал.
@@ -785,6 +783,31 @@ async function runScanOnce(): Promise<ScanResult> {
   // клиент показывает «найдено/проверено» и обновляет ленту, не держа связь.
   scanState.finished_ts = nowSec();
   scanState.last_result = result;
+  // История воронки: сохраняем КАЖДЫЙ финальный проход — и успех, и остановку по
+  // бюджету/времени (оба пути доходят сюда, после цикла), поэтому окно «Воронка
+  // отбора» видит и «пустые» сканы. Пишется и в mock, и в live: в демо воронка
+  // тоже должна быть видна. Скан, упавший ЦЕЛИКОМ (failScanState в runScan),
+  // сюда НЕ доходит — писать нечего, цельного прохода не было (частичный сбой
+  // источника уже учтён как by_layer.error). ts — реальное время завершения (как
+  // в audit и в статусе), поэтому окно периода на роуте /api/funnel совпадает с
+  // реальными сутками; by_layer — слои 1..5 + budget/error (без вложенного by_check).
+  // Запись истории воронки не должна ронять УЖЕ УСПЕШНЫЙ скан: сигналы записаны,
+  // итог отдан клиенту. Сбой записи — одна строка в stderr и продолжение, как
+  // сделано с cleanupHistory в events.ts.
+  try {
+    insertScanRun({
+      ts: scanState.finished_ts,
+      candidates_total: scanState.candidates_total,
+      candidates_done: processed,
+      signals_found: ids.length,
+      elapsed_ms: scanState.elapsed_ms,
+      budget_used: scanState.budget_used,
+      by_layer: { ...rejected },
+      by_check: { ...byCheck },
+    });
+  } catch (e) {
+    console.error(`[скан] запись истории воронки не удалась: ${e instanceof Error ? e.message : e}`);
+  }
   return result;
 }
 

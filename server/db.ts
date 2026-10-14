@@ -13,7 +13,14 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { REPO_ROOT, getEnv, getEnvNum, readDataMode, ApiError } from "./config.ts";
-import type { Settings, SettingsPatch, AlertKind } from "../shared/types.ts";
+import type {
+  Settings,
+  SettingsPatch,
+  AlertKind,
+  ScanRun,
+  FunnelDay,
+  FunnelSummary,
+} from "../shared/types.ts";
 
 /* ─────────────── соединение ─────────────── */
 
@@ -237,6 +244,26 @@ function migrate(d: DatabaseSync): void {
       ts INTEGER NOT NULL
     );
 
+    -- История проходов воронки отбора: по строке на КАЖДЫЙ завершённый скан
+    -- (плановый, ручной и mock). Нужна окну «Воронка отбора»: владелец видит, на
+    -- каком слое/по какому чеку срезаются монеты, и сравнивает дни между собой.
+    -- by_layer/by_check — снимок диагностики скана (JSON) рядом с сырыми числами
+    -- (candidates/signals), чтобы периоды суммировались без разбора JSON. ts —
+    -- время завершения скана, сек; индекс по ts держит запросы окна дешёвыми.
+    CREATE TABLE IF NOT EXISTS scan_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      candidates_total INTEGER NOT NULL,
+      candidates_done INTEGER NOT NULL,
+      signals_found INTEGER NOT NULL,
+      elapsed_ms INTEGER NOT NULL,
+      budget_used INTEGER NOT NULL,
+      by_layer_json TEXT NOT NULL DEFAULT '{}',
+      by_check_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scan_runs_ts ON scan_runs(ts);
+
     CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts);
     CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
     CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id);
@@ -278,6 +305,12 @@ function ensureUniqueOpenIndex(d: DatabaseSync): void {
 
 /* ─────────────── настройки ─────────────── */
 
+/**
+ * Порог сожжённой/заблокированной ликвидности — НАСТРОЙКА скринера (слой 1,
+ * безопасность): поле объявлено в контракте (shared/types.ts, ScreenerSettings),
+ * дефолт — ниже в DEFAULT_SETTINGS. Раньше это была константа в screener.ts,
+ * теперь порог крутит владелец без правки кода.
+ */
 export const DEFAULT_SETTINGS: Settings = {
   screener: {
     age_min: 7,
@@ -311,6 +344,13 @@ export const DEFAULT_SETTINGS: Settings = {
     drawdown_max: 95,
     holders_growth_min: 1.5,
     maker_min: 120,
+    // Слой 1: минимальная доля сожжённой/заблокированной ликвидности, %. Бывшая
+    // константа screener.BURNED_LIQ_MIN_PCT. РЕШЕНИЕ ВЛАДЕЛЬЦА от 12.10.2026:
+    // ослаблено с жёстких 100% («полностью сожжена») до 70% — на живом рынке 100%
+    // отсекало почти все монеты и сигналов не было; 70% — компромисс между защитой
+    // от rug-pull и живостью контура. Вынесено в настройки, чтобы порог можно было
+    // менять без правки кода (раньше был зашит).
+    burned_liq_min: 70,
   },
   demo: {
     start_balance: 500,
@@ -362,6 +402,8 @@ const SETTINGS_SPEC: Record<keyof Settings, Record<string, Spec>> = {
     drawdown_max: { type: "number", min: 0, max: 100 },
     holders_growth_min: { type: "number", min: 0, max: 1000 },
     maker_min: { type: "number", min: 0, max: 1e7 },
+    // Доля сожжённой ликвидности — это процент, поэтому 0..100.
+    burned_liq_min: { type: "number", min: 0, max: 100 },
   },
   demo: {
     start_balance: { type: "number", min: 0, max: 1e9 },
@@ -699,4 +741,151 @@ export interface PositionRow {
   closed_ts: number | null;
   close_reason: string | null;
   note: string;
+}
+
+/* ─────────────── история воронки (scan_runs) ─────────────── */
+
+/** Строка scan_runs как в БД: JSON-диагностика лежит текстом. */
+interface ScanRunRow {
+  id: number;
+  ts: number;
+  candidates_total: number;
+  candidates_done: number;
+  signals_found: number;
+  elapsed_ms: number;
+  budget_used: number;
+  by_layer_json: string;
+  by_check_json: string;
+}
+
+/**
+ * Разобрать JSON-столбец с счётчиками. Битый JSON (старая/повреждённая строка)
+ * не должен ронять чтение истории — отдаём пустой объект, как в соседних местах
+ * (readGroup, safeParse в index.ts). Не-объект (массив/число/строка) — тоже «{}».
+ */
+function parseCounts(json: string): Record<string, number> {
+  try {
+    const v = JSON.parse(json) as unknown;
+    if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, number>;
+  } catch {
+    // Битый JSON — оставляем пустой объект: одна плохая строка не ломает сводку.
+  }
+  return {};
+}
+
+/** Прибавить счётчики `add` к аккумулятору `into` (только конечные числа). */
+function addCounts(into: Record<string, number>, add: Record<string, number>): void {
+  for (const [k, v] of Object.entries(add)) {
+    if (typeof v === "number" && Number.isFinite(v)) into[k] = (into[k] ?? 0) + v;
+  }
+}
+
+/** Начало календарного дня в поясе Бишкек (UTC+6) для unix-секунд ts — РЕАЛЬНЫЕ
+ *  unix-секунды этого начала. Тот же сдвиг пояса, что и на главной
+ *  (src/screens/Home.tsx): сутки КАЛЕНДАРНЫЕ по Бишкеку, без перехода на летнее
+ *  время. Сдвиг ВЫЧИТАЕТСЯ обратно, иначе результатом было бы «начало суток плюс
+ *  шесть часов», а не настоящая полночь по Бишкеку. */
+function bishkekDay(ts: number): number {
+  const offset = 6 * 3600;
+  return Math.floor((ts + offset) / 86400) * 86400 - offset;
+}
+
+/** Строка БД → ScanRun: разбираем JSON-диагностику в объекты. */
+function scanRunFromRow(r: ScanRunRow): ScanRun {
+  return {
+    id: r.id,
+    ts: r.ts,
+    candidates_total: r.candidates_total,
+    candidates_done: r.candidates_done,
+    signals_found: r.signals_found,
+    elapsed_ms: r.elapsed_ms,
+    budget_used: r.budget_used,
+    by_layer: parseCounts(r.by_layer_json),
+    by_check: parseCounts(r.by_check_json),
+  };
+}
+
+/** Сохранить один ПРОХОД воронки (вызывается по завершении скана — и в mock, и в live). */
+export function insertScanRun(rec: Omit<ScanRun, "id">): void {
+  getDb()
+    .prepare(
+      "INSERT INTO scan_runs(ts, candidates_total, candidates_done, signals_found, elapsed_ms, " +
+        "budget_used, by_layer_json, by_check_json) VALUES(?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      rec.ts,
+      rec.candidates_total,
+      rec.candidates_done,
+      rec.signals_found,
+      rec.elapsed_ms,
+      rec.budget_used,
+      JSON.stringify(rec.by_layer ?? {}),
+      JSON.stringify(rec.by_check ?? {}),
+    );
+}
+
+/** Последние проходы воронки (свежие первыми), JSON-поля — объектами. */
+export function listScanRuns(limit: number): ScanRun[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM scan_runs ORDER BY ts DESC, id DESC LIMIT ?")
+    .all(Math.max(0, Math.floor(limit))) as unknown as ScanRunRow[];
+  return rows.map(scanRunFromRow);
+}
+
+/**
+ * Сводка воронки за период [from, to] (unix-секунды, включительно).
+ *
+ * Складываем по всем проходам периода: число проходов, взятые в работу монеты и
+ * найденные сигналы, а также отбраковку по слоям и по кодам проверок. Отдельно
+ * даём разбивку по КАЛЕНДАРНЫМ дням Бишкера (UTC+6) — только дни, в которые
+ * были проходы, свежие первыми — и последние `recentLimit` проходов для списка.
+ * Битые JSON-строки в базе не роняют сводку (считаются за «{}»).
+ */
+export function funnelSummary(from: number, to: number, recentLimit = 20): FunnelSummary {
+  const fromS = Math.floor(from);
+  const toS = Math.floor(to);
+  const rows = getDb()
+    .prepare("SELECT * FROM scan_runs WHERE ts >= ? AND ts <= ? ORDER BY ts DESC, id DESC")
+    .all(fromS, toS) as unknown as ScanRunRow[];
+
+  let candidatesTotal = 0;
+  let signalsFound = 0;
+  const byLayer: Record<string, number> = {};
+  const byCheck: Record<string, number> = {};
+  const byDay = new Map<number, FunnelDay>();
+
+  for (const r of rows) {
+    candidatesTotal += r.candidates_total;
+    signalsFound += r.signals_found;
+    const layer = parseCounts(r.by_layer_json);
+    const check = parseCounts(r.by_check_json);
+    addCounts(byLayer, layer);
+    addCounts(byCheck, check);
+
+    const day = bishkekDay(r.ts);
+    let d = byDay.get(day);
+    if (!d) {
+      d = { day, runs: 0, candidates: 0, signals: 0, by_layer: {}, by_check: {} };
+      byDay.set(day, d);
+    }
+    d.runs += 1;
+    d.candidates += r.candidates_total;
+    d.signals += r.signals_found;
+    addCounts(d.by_layer, layer);
+    addCounts(d.by_check, check);
+  }
+
+  const days = [...byDay.values()].sort((a, b) => b.day - a.day);
+  const recent = rows.slice(0, Math.max(0, Math.floor(recentLimit))).map(scanRunFromRow);
+  return {
+    from: fromS,
+    to: toS,
+    runs: rows.length,
+    candidates_total: candidatesTotal,
+    signals_found: signalsFound,
+    by_layer: byLayer,
+    by_check: byCheck,
+    days,
+    recent,
+  };
 }

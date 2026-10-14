@@ -27,4 +27,5 @@ import "./thresholds.test.ts";
 import "./media.test.ts";
 import "./refine.test.ts";
 import "./scan_diagnose.test.ts";
+import "./funnel.test.ts";
 import "./events.test.ts";
