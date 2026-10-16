@@ -14,6 +14,10 @@ import tailwindcss from "@tailwindcss/vite";
 const BUILD = new Date().toISOString().slice(0, 16).replace("T", " ");
 
 export default defineConfig({
+  /* Превью отдаёт корень и не блокирует внешний домен: приложение живёт по
+     постоянному адресу (sslip.io), а Vite по умолчанию пускает только
+     localhost и отвечает 403 на всё остальное. */
+  preview: { allowedHosts: true },
   define: { __BUILD__: JSON.stringify(BUILD) },
   base: process.env.VITE_BASE || "/prometey_autotrade_app/",
   plugins: [react(), tailwindcss()],
